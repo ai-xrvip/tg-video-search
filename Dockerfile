@@ -1,4 +1,5 @@
-﻿# Use Python 3.12 slim base
+﻿# syntax=docker/dockerfile:1
+# TG Video Search Bot - Build: 20260713-01
 FROM python:3.12-slim
 
 # Install system dependencies for curl_cffi and cloudscraper
