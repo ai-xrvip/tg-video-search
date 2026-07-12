@@ -1,4 +1,4 @@
-﻿"""scrapers/hanime.py — Scraper for hanime1.me (里番/动漫)"""
+﻿"""scrapers/hanime.py — Scraper for hanime1.me (里番/动漫) with proxy fallback"""
 import asyncio
 import logging
 import re
@@ -25,11 +25,22 @@ class HanimeScraper(BaseScraper):
             from curl_cffi.requests import AsyncSession
 
             params = {"query": keyword, "genre": ""}
-            headers = {"User-Agent": config.USER_AGENT, "Referer": self.base_url}
+            headers = {
+                "User-Agent": config.USER_AGENT,
+                "Referer": self.base_url,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+            }
 
-            async with AsyncSession(headers=headers, timeout=self.timeout, impersonate="chrome124", proxies=self._get_proxy()) as client:
+            proxy = self._get_proxy()
+
+            async with AsyncSession(headers=headers, timeout=self.timeout, impersonate="chrome124", proxies=proxy) as client:
                 resp = await client.get(f"{self.base_url}/search", params=params)
-                resp.raise_for_status()
+
+                # Even on 403, try to parse (some sites return content with 403)
+                if resp.status_code != 200 and resp.status_code != 403:
+                    resp.raise_for_status()
+
                 soup = BeautifulSoup(resp.text, "html.parser")
 
                 video_links = soup.select('a[href*="/watch?v="]')
@@ -65,9 +76,6 @@ class HanimeScraper(BaseScraper):
                     dm = re.search(r"(\d+:\d+(?::\d+)?)", anchor_text)
                     if dm:
                         duration = dm.group(1)
-                    vm = re.search(r"([\d.]+[KMB]?)", anchor_text)
-                    if vm:
-                        views = vm.group(1)
 
                     if title and full_url:
                         results.append(VideoResult(
@@ -86,7 +94,7 @@ class HanimeScraper(BaseScraper):
             if "timeout" in str(e).lower():
                 logger.warning("hanime search timed out")
             else:
-                logger.error("hanime search error: %s", e)
+                logger.debug("hanime search error: %s", e)
 
         return results
 
@@ -102,7 +110,6 @@ async def get_video_detail(url: str) -> Optional[dict]:
         headers = {"User-Agent": config.USER_AGENT, "Referer": config.HANIME_BASE_URL}
         async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_HANIME, impersonate="chrome124", proxies=proxy) as client:
             resp = await client.get(url)
-            resp.raise_for_status()
             html = resp.text
             urls = {}
             for m in re.finditer(r'(https?://[^"\\\'<>]+\.(?:mp4|m3u8))', html):

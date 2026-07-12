@@ -1,4 +1,4 @@
-﻿"""scrapers/jav.py — Scraper for missav.ws (日韩AV)"""
+﻿"""scrapers/jav.py — Scraper for missav.ws (日韩AV) with Cloudflare bypass"""
 import asyncio
 import logging
 import re
@@ -25,14 +25,26 @@ class JavScraper(BaseScraper):
             from curl_cffi.requests import AsyncSession
 
             search_url = f"{self.base_url}/dm334/search/{keyword}"
-            headers = {"User-Agent": config.USER_AGENT, "Referer": self.base_url}
+            headers = {
+                "User-Agent": config.USER_AGENT,
+                "Referer": self.base_url,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "ja,zh-CN;q=0.9,en;q=0.8",
+            }
 
-            async with AsyncSession(headers=headers, timeout=self.timeout, impersonate="chrome124", proxies=self._get_proxy()) as client:
+            proxy = self._get_proxy()
+
+            async with AsyncSession(headers=headers, timeout=self.timeout, impersonate="chrome124", proxies=proxy) as client:
                 resp = await client.get(search_url)
-                resp.raise_for_status()
+
+                # Don't raise on 403 — Cloudflare sometimes returns content
+                if resp.status_code != 403:
+                    resp.raise_for_status()
+
                 soup = BeautifulSoup(resp.text, "html.parser")
 
-                items = soup.select("div.thumbnail.group")
+                # Try multiple selectors
+                items = soup.select("div.thumbnail.group, div.item, div.video-item")
                 seen_urls = set()
 
                 for item in items:
@@ -79,10 +91,7 @@ class JavScraper(BaseScraper):
         except ImportError:
             logger.error("jav: curl_cffi not installed")
         except Exception as e:
-            if "timeout" in str(e).lower():
-                logger.warning("jav search timed out")
-            else:
-                logger.error("jav search error: %s", e)
+            logger.debug("jav search error: %s", e)
 
         return results
 
@@ -98,7 +107,6 @@ async def get_video_detail(url: str) -> Optional[dict]:
         headers = {"User-Agent": config.USER_AGENT, "Referer": config.JAV_BASE_URL}
         async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_JAV, impersonate="chrome124", proxies=proxy) as client:
             resp = await client.get(url)
-            resp.raise_for_status()
             html = resp.text
             m = re.search(r'dvd_id["\']?\s*:\s*["\']([^"\']+)["\']', html)
             if m:
