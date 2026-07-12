@@ -1,10 +1,10 @@
-﻿"""main.py — TG Video Search Bot entry point"""
+"""main.py — TG Video Search Bot entry point"""
 import asyncio
 import gc
 import logging
 import os
 import signal
-import sys
+import sys\nimport time
 from datetime import datetime
 
 from telegram import Update
@@ -245,14 +245,30 @@ def main():
             asyncio.run(shutdown(app, "SIGINT"))
     else:
         # Polling mode — run_polling() handles the event loop
+        # Implement retry logic for Telegram Conflict errors
         logger.info("Starting in polling mode")
-        try:
-            app.run_polling(
-                allowed_updates=["message", "callback_query", "inline_query"],
-                drop_pending_updates=True,
-            )
-        except KeyboardInterrupt:
-            asyncio.run(shutdown(app, "SIGINT"))
+        max_retries = 10
+        base_delay = 15  # seconds
+        for attempt in range(1, max_retries + 1):
+            try:
+                app.run_polling(
+                    allowed_updates=["message", "callback_query", "inline_query"],
+                    drop_pending_updates=True,
+                )
+                break  # Normal exit
+            except KeyboardInterrupt:
+                asyncio.run(shutdown(app, "SIGINT"))
+                break
+            except Exception as e:
+                error_str = str(e)
+                if "Conflict" in error_str or "409" in error_str:
+                    delay = base_delay * (2 ** (attempt - 1))
+                    delay = min(delay, 120)  # Cap at 120 seconds
+                    logger.warning("Telegram conflict detected (attempt %d/%d), retrying in %ds...", attempt, max_retries, delay)
+                    time.sleep(delay)
+                else:
+                    logger.error("Polling error: %s", e)
+                    break
 
 
 if __name__ == "__main__":
