@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.pyc
 .env
 data/*.db
@@ -8,3 +8,9 @@ data/*.db-shm
 dist/
 build/
 *.log
+test_*.py
+test_*.txt
+test_*.db
+.DS_Store
+.venv/
+venv/

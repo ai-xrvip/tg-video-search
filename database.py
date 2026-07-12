@@ -1,14 +1,4 @@
-"""SQLite database layer — WAL-mode SQLite with async executor dispatch.
-Mirrors the tb-deploy pattern for consistency.
-
-Tables:
-  - vip_users: VIP会员
-  - all_users: 所有用户
-  - cards: 卡密
-  - invites: 邀请码
-  - stats_daily: 每日统计
-  - search_history: 搜索历史
-"""
+﻿"""SQLite database layer — WAL-mode SQLite with async executor dispatch."""
 from __future__ import annotations
 
 import asyncio
@@ -113,10 +103,15 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
-async def _run(fn, *args, **kwargs):
+async def _run(fn, *args):
+    """Run a sync function in the DB thread pool executor.
+    
+    NOTE: asyncio.get_running_loop().run_in_executor() does NOT accept kwargs,
+    so this function intentionally does not pass through **kwargs.
+    """
     await _db_ready.wait()
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_db_executor, fn, *args, **kwargs)
+    return await loop.run_in_executor(_db_executor, fn, *args)
 
 
 async def _exec(sql: str, params=()):
@@ -155,7 +150,7 @@ async def _fetch_val(sql: str, params=()):
     def _do():
         c = _conn()
         row = c.execute(sql, params).fetchone()
-        return row and next(iter(row.values()))
+        return row and next(iter(row.values())) if row else None
     return await _run(_do)
 
 
@@ -175,7 +170,7 @@ async def start_database():
 
 
 async def stop_database():
-    global _db_executor
+    global _local
     _db_ready.clear()
     with _connections_lock:
         for conn in list(_connections):
@@ -186,7 +181,7 @@ async def stop_database():
         _connections.clear()
     if _db_executor:
         _db_executor.shutdown(wait=True)
-        _db_executor = None
+    logger.info("Database stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +320,8 @@ async def db_add_search_history(user_id: int, keyword: str):
 
 async def db_get_user_history(user_id: int, limit: int = 6) -> list[str]:
     rows = await _fetch_all(
-        "SELECT keyword, MAX(searched_at) AS last_search FROM search_history WHERE user_id = ? GROUP BY keyword ORDER BY last_search DESC LIMIT ?",
+        "SELECT keyword, MAX(searched_at) AS last_search FROM search_history "
+        "WHERE user_id = ? GROUP BY keyword ORDER BY last_search DESC LIMIT ?",
         (user_id, limit),
     )
     return [r["keyword"] for r in rows]

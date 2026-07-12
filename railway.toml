@@ -1,8 +1,9 @@
-[build]
+﻿[build]
 builder = "DOCKERFILE"
 
 [deploy]
 restartPolicyType = "ALWAYS"
+startCommand = "python main.py"
 
 [deploy.volumes]
 data = "/app/data"

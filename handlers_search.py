@@ -1,7 +1,11 @@
-"""handlers_search.py — Search logic. Titles as links, cats re-search on click."""
-import asyncio, html, logging
+﻿"""handlers_search.py — Search logic with proper update object handling."""
+import asyncio
+import html
+import logging
 from datetime import datetime
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from bot_utils import (
     now_ts, is_vip, check_rate_limit, store_url, get_url,
     user_waiting_search, user_category,
@@ -13,115 +17,206 @@ from scrapers import search_all, CATEGORIES
 from config import config
 
 logger = logging.getLogger(__name__)
+
 _search_cache = {}
 _search_cache_lock = asyncio.Lock()
 _search_counter = 0
 _SEARCH_CACHE_TTL = 600
 
+
 async def _clean_search_cache():
     now = now_ts()
     async with _search_cache_lock:
-        expired = [sid for sid, e in _search_cache.items() if now - e.get("ts", 0) > _SEARCH_CACHE_TTL]
+        expired = [sid for sid, e in list(_search_cache.items()) if now - e.get("ts", 0) > _SEARCH_CACHE_TTL]
         for sid in expired:
             del _search_cache[sid]
 
+
 async def _do_search(update_or_msg, keyword, category="all", page=1):
-    user_id, msg, chat_id = None, None, None
+    """Handle a search request.
+
+    Accepts either a telegram.Update or a telegram.CallbackQuery as input.
+    Returns (user_id, chat_id) for the caller.
+    """
+    # Extract user_id, message object, and chat_id from update/query
+    user_id = None
+    msg = None
+    chat_id = None
+
     if hasattr(update_or_msg, "effective_user"):
+        # Called from a command handler (telegram.Update)
         user_id = update_or_msg.effective_user.id
-        msg = await update_or_msg.message.reply_text("Searching...")
         chat_id = update_or_msg.effective_chat.id
-    elif hasattr(update_or_msg, "reply_text"):
-        user_id = getattr(update_or_msg, "from_user", None) and update_or_msg.from_user.id
-        chat_id = getattr(update_or_msg, "chat_id", None)
-        msg = update_or_msg
-    else:
+        # Send a "Searching..." placeholder
+        try:
+            msg = await update_or_msg.message.reply_text("🔍 Searching...")
+        except Exception:
+            return
+    elif hasattr(update_or_msg, "message") and hasattr(update_or_msg, "from_user"):
+        # Called from a callback query handler (telegram.CallbackQuery)
         user_id = update_or_msg.from_user.id
-        msg = update_or_msg.message
         chat_id = update_or_msg.message.chat_id
-    if not user_id:
+        msg = update_or_msg.message  # Edit the callback message directly
+    else:
+        logger.error("Unknown update type: %s", type(update_or_msg))
         return
+
+    if not user_id or not msg:
+        return
+
+    # Track new users
     if user_id not in ALL_USERS:
         ALL_USERS.add(user_id)
         asyncio.create_task(db_add_user(user_id))
         asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "new_users"))
+
+    # Rate limit for non-VIP
     if not is_vip(user_id) and not await check_rate_limit(user_id):
-        await msg.edit_text("Too frequent.")
+        try:
+            await msg.edit_text("⏱️ 操作太频繁了，请稍后再试～\n开通VIP可无限搜索！")
+        except Exception:
+            pass
         return
-    cat_label = CATEGORY_LABELS.get(category, "All")
+
+    cat_label = CATEGORY_LABELS.get(category, "全部")
+    status_text = f"🔍 正在搜索 <b>{html.escape(keyword)}</b> 在 <b>{cat_label}</b> 中..."
     try:
-        await msg.edit_text("Searching %s in %s..." % (keyword, cat_label))
+        await msg.edit_text(status_text, parse_mode="HTML")
     except Exception:
         pass
+
+    # Log search
     asyncio.create_task(db_add_search_history(user_id, keyword))
     asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "searches"))
+
+    # Perform the search
     try:
-        results = await asyncio.wait_for(search_all(keyword, category, config.MAX_SEARCH_RESULTS), timeout=25.0)
+        results = await asyncio.wait_for(
+            search_all(keyword, category, config.MAX_SEARCH_RESULTS),
+            timeout=25.0,
+        )
     except asyncio.TimeoutError:
-        await msg.edit_text("Timeout.")
+        try:
+            await msg.edit_text("⏱️ 搜索超时，请重试", parse_mode="HTML")
+        except Exception:
+            pass
         return
     except Exception as e:
         logger.error("Search error: %s", e)
-        await msg.edit_text("Error.")
+        try:
+            await msg.edit_text("❌ 搜索出错，请稍后重试", parse_mode="HTML")
+        except Exception:
+            pass
         return
+
     if not results:
-        kb = InlineKeyboardMarkup([CATEGORY_BUTTONS[0], [InlineKeyboardButton("Retry", callback_data="resrch_%s_%s" % (keyword, category))]])
-        await msg.edit_text("No results for %s in %s." % (keyword, cat_label), reply_markup=kb)
+        kb = InlineKeyboardMarkup([
+            CATEGORY_BUTTONS[0],
+            [InlineKeyboardButton("🔄 重试", callback_data=f"resrch_{keyword}_{category}")],
+            [InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")],
+        ])
+        try:
+            await msg.edit_text(
+                f"❌ 没有找到 <b>{html.escape(keyword)}</b> 在 <b>{cat_label}</b> 中的结果",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
         return
+
+    # Cache results
     global _search_counter
     async with _search_cache_lock:
         _search_counter += 1
         search_id = str(_search_counter)
-        _search_cache[search_id] = {"results": results, "keyword": keyword, "category": category, "chat_id": chat_id, "ts": now_ts()}
+        _search_cache[search_id] = {
+            "results": results,
+            "keyword": keyword,
+            "category": category,
+            "chat_id": chat_id,
+            "ts": now_ts(),
+        }
         await _clean_search_cache()
+
     await _show_results_page(msg, search_id, 1)
 
+
 async def _show_results_page(msg, search_id, page=1):
+    """Display a page of search results."""
     async with _search_cache_lock:
         entry = _search_cache.get(search_id)
+
     if not entry:
-        await msg.edit_text("Expired.")
+        try:
+            await msg.edit_text("⌛ 搜索结果已过期，请重新搜索",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔍 搜索", callback_data="menu_search")
+                ]]))
+        except Exception:
+            pass
         return
-    results, keyword = entry["results"], entry["keyword"]
+
+    results = entry["results"]
+    keyword = entry["keyword"]
     cur_cat = entry.get("category", "all")
     total = len(results)
-    tp = max(1, (total + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE)
-    page = max(1, min(page, tp))
-    s, e = (page - 1) * RESULTS_PER_PAGE, min((page - 1) * RESULTS_PER_PAGE + RESULTS_PER_PAGE, total)
-    pr = results[s:e]
+    total_pages = max(1, (total + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE)
+    page = max(1, min(page, total_pages))
+    start_idx = (page - 1) * RESULTS_PER_PAGE
+    end_idx = min(start_idx + RESULTS_PER_PAGE, total)
+    page_results = results[start_idx:end_idx]
 
+    # Build category switch row
     cat_row = []
     for cid, cinfo in CATEGORIES.items():
         label = cinfo["label"]
         if cid == cur_cat:
-            cat_row.append(InlineKeyboardButton("[" + label + "]", callback_data="catr_%s_%s" % (keyword, cid)))
+            cat_row.append(InlineKeyboardButton(f"[{label}]", callback_data=f"catr_{keyword}_{cid}"))
         else:
-            cat_row.append(InlineKeyboardButton(label, callback_data="catr_%s_%s" % (keyword, cid)))
+            cat_row.append(InlineKeyboardButton(label, callback_data=f"catr_{keyword}_{cid}"))
+
     btns = [cat_row]
 
-    parts = ["\U0001f50d <b>%s</b>  (共%d个, 第%d/%d页)" % (html.escape(keyword), total, page, tp)]
+    # Build result text
+    parts = [
+        f"🔍 <b>{html.escape(keyword)}</b>  (共{total}个  第{page}/{total_pages}页)"
+    ]
 
-    for i, r in enumerate(pr):
-        idx = s + i + 1
-        t = r.get("title", "?")[:60]
-        sl = r.get("source_label", "")
-        d = r.get("duration", "")
+    for i, r in enumerate(page_results):
+        idx = start_idx + i + 1
+        title = r.get("title", "?")[:60]
+        source_label = r.get("source_label", "")
+        duration = r.get("duration", "")
         url = r.get("url", "")
-        parts.append("\n%d. <a href=\"%s\">%s</a>" % (idx, html.escape(url), html.escape(t)))
-        dur_str = (" ⏱" + d) if d else ""
-        parts.append("   %s%s" % (sl, dur_str))
 
-    nr = []
+        parts.append(f"\n{idx}. <a href=\"{html.escape(url)}\">{html.escape(title)}</a>")
+        dur_str = f"  ⏱{duration}" if duration else ""
+        parts.append(f"   {source_label}{dur_str}")
+
+    # Navigation buttons
+    nav_row = []
     if page > 1:
-        nr.append(InlineKeyboardButton("◀ Prev", callback_data="page_%s_%d" % (search_id, page - 1)))
-    nr.append(InlineKeyboardButton("%d/%d" % (page, tp), callback_data="page_info"))
-    if page < tp:
-        nr.append(InlineKeyboardButton("Next ▶", callback_data="page_%s_%d" % (search_id, page + 1)))
-    if nr:
-        btns.append(nr)
-    btns.append([InlineKeyboardButton("New Search", callback_data="resrch_%s_%s" % (keyword, cur_cat)), InlineKeyboardButton("Home", callback_data="menu_home")])
+        nav_row.append(InlineKeyboardButton("◀ 上一页", callback_data=f"page_{search_id}_{page - 1}"))
+    nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="page_info"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("下一页 ▶", callback_data=f"page_{search_id}_{page + 1}"))
+    if nav_row:
+        btns.append(nav_row)
+
+    # Bottom action buttons
+    btns.append([
+        InlineKeyboardButton("🔄 重新搜索", callback_data=f"resrch_{keyword}_{cur_cat}"),
+        InlineKeyboardButton("🏠 主页", callback_data="menu_home"),
+    ])
+
     try:
-        await msg.edit_text("\n".join(parts), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(btns), disable_web_page_preview=True)
+        await msg.edit_text(
+            "\n".join(parts),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(btns),
+            disable_web_page_preview=True,
+        )
     except Exception as e:
         if "not modified" not in str(e).lower():
             logger.warning("Edit failed: %s", e)

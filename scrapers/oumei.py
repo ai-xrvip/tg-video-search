@@ -1,4 +1,4 @@
-"""scrapers/oumei.py ? Scraper for xvideos.com (??)"""
+﻿"""scrapers/oumei.py — Scraper for xvideos.com (欧美)"""
 import asyncio
 import logging
 import re
@@ -22,17 +22,22 @@ class OumeiScraper(BaseScraper):
     async def search(self, keyword: str, max_results: int = 15) -> list[VideoResult]:
         results = []
         try:
-            import httpx
+            from curl_cffi.requests import AsyncSession
+
             params = {"k": keyword}
             headers = {
                 "User-Agent": config.USER_AGENT,
                 "Referer": self.base_url,
                 "Accept-Language": "en-US,en;q=0.9",
             }
-            async with httpx.AsyncClient(headers=headers, timeout=self.timeout, follow_redirects=True) as client:
+            async with AsyncSession(
+                headers=headers,
+                timeout=self.timeout,
+                impersonate="chrome124",
+            ) as client:
                 resp = await client.get(self.base_url, params=params)
                 resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, "html.parser")
+                soup = BeautifulSoup(resp.text, "lxml")
 
                 items = soup.select("div.thumb, div.thumb-block, div.mozaique div.thumb")
                 seen_urls = set()
@@ -79,12 +84,13 @@ class OumeiScraper(BaseScraper):
                         logger.debug("oumei item parse error: %s", e)
                         continue
 
-        except asyncio.TimeoutError:
-            logger.warning("oumei search timed out")
-        except httpx.HTTPStatusError as e:
-            logger.warning("oumei HTTP error: %s", e)
+        except ImportError:
+            logger.error("oumei: curl_cffi not installed")
         except Exception as e:
-            logger.error("oumei search error: %s", e)
+            if "timeout" in str(e).lower():
+                logger.warning("oumei search timed out")
+            else:
+                logger.error("oumei search error: %s", e)
 
         return results
 

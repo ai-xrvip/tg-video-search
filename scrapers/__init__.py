@@ -1,9 +1,4 @@
-"""scrapers/__init__.py ? Unified search interface with module auto-discovery.
-
-Pattern source:
-- PaulSonOfLars/tgbot: module auto-loading via glob + __all__
-- Selutario/videogram: scraper abstraction layer
-"""
+﻿"""scrapers/__init__.py — Unified search interface with module auto-discovery."""
 from __future__ import annotations
 
 import asyncio
@@ -15,10 +10,7 @@ from scrapers.base import BaseScraper, VideoResult, register_scraper, get_scrape
 
 logger = logging.getLogger(__name__)
 
-# Registry is managed by base.py via register_scraper()/get_scraper()/list_scrapers()
-# Subclasses auto-register via BaseScraper.__init_subclass__
-
-# ===== Module auto-discovery (PaulSonOfLars pattern) =====
+# ===== Module auto-discovery =====
 # Scrapers are auto-discovered; just drop a .py in scrapers/ and it loads.
 
 CATEGORIES: dict[str, dict] = {}
@@ -42,6 +34,8 @@ def _discover_scrapers():
         try:
             __import__(f"scrapers.{mod_name}", fromlist=[""])
             logger.debug("Discovered scraper module: %s", mod_name)
+        except ImportError as e:
+            logger.warning("Failed to load scraper %s (missing dep): %s", mod_name, e)
         except Exception as e:
             logger.warning("Failed to load scraper %s: %s", mod_name, e)
 
@@ -74,16 +68,7 @@ def _ensure_built():
 
 
 async def search_all(keyword: str, category: str = "all", max_results: int = 30) -> list[dict]:
-    """Search across all (or selected category) video sources.
-
-    Args:
-        keyword: Search term
-        category: 'all', 'guochan', 'hanime', 'jav', 'oumei', 'jav_id'
-        max_results: Maximum total results across all sources
-
-    Returns:
-        List of result dicts (compatible with existing inline/command handlers)
-    """
+    """Search across all (or selected category) video sources."""
     _ensure_built()
 
     cat_config = CATEGORIES.get(category, CATEGORIES.get("all", {}))
@@ -105,9 +90,8 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
     all_results: list[VideoResult] = []
     done = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for src_name, result in zip(
-        [s for s in source_names if get_scraper(s) is not None], done
-    ):
+    active_sources = [s for s in source_names if get_scraper(s) is not None]
+    for src_name, result in zip(active_sources, done):
         if isinstance(result, Exception):
             logger.error("%s search failed: %s", src_name, result)
             continue
