@@ -14,7 +14,7 @@ from bot_utils import (
 from database import db_add_user, db_bump_stat, db_add_search_history
 from pre_cache import cache_get, cache_set, track_search
 import scrapers
-from scrapers import search_all, _ensure_built, get_scraper, CATEGORIES
+from scrapers import search_all, _ensure_built, get_scraper
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ async def _show_results_page(msg, search_entry, page=1):
     _ensure_built()
     cat_row = []
     for cid in UI_CAT_IDS:
-        cinfo = CATEGORIES.get(cid)
+        cinfo = scrapers.CATEGORIES.get(cid)
         if not cinfo:
             continue
         label = cinfo["label"]
