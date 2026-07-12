@@ -1,4 +1,4 @@
-﻿"""handlers_callbacks.py — Callback query handler for inline keyboard interactions"""
+﻿"""handlers_callbacks.py — Full callback handler with video playback"""
 import asyncio
 import html
 import logging
@@ -40,6 +40,11 @@ async def handle_callback(update, context):
         pass
 
     try:
+        # ── PLAY VIDEO ──
+        if data.startswith("play_"):
+            await _handle_play(query, context, data)
+            return
+
         # ── Category switching in search results ──
         if data.startswith("catr_"):
             rest = data[5:]
@@ -50,7 +55,20 @@ async def handle_callback(update, context):
                 await _do_search(query, keyword, cat)
             return
 
-        # ── Category switching (standalone) ──
+        # ── Page navigation ──
+        if data.startswith("pg_"):
+            parts = data.split("_", 3)
+            if len(parts) >= 4:
+                try:
+                    keyword = parts[1]
+                    page = int(parts[2])
+                    cat = parts[3]
+                    await _do_search(query, keyword, cat)
+                except (ValueError, IndexError):
+                    pass
+            return
+
+        # ── Category switching ──
         if data.startswith("cat_"):
             cat = data[4:]
             if cat in CATEGORY_LABELS:
@@ -75,22 +93,6 @@ async def handle_callback(update, context):
                 return
             category = user_category.get(user_id, "all")
             await _do_search(query, keyword, category)
-            return
-
-        # ── Page navigation ──
-        if data.startswith("page_"):
-            parts = data.split("_", 3)
-            if len(parts) >= 4:
-                try:
-                    keyword = parts[1]
-                    page_str = parts[2]
-                    cat = parts[3]
-                    page = int(page_str)
-                    from handlers_search import _show_results_page
-                    # For page nav we need to re-search and show page
-                    await _do_search(query, keyword, cat)
-                except (ValueError, IndexError):
-                    pass
             return
 
         # ── Re-search ──
@@ -148,19 +150,16 @@ async def handle_callback(update, context):
             await cmd_help(query, context)
             return
 
-        # ── VIP card activation ──
         if data == "vip_activate":
             user_waiting_search.discard(user_id)
             user_waiting_card.add(user_id)
             await query.edit_message_text(
-                "🔽 请输入卡密（卡密格式：X-xxxxxxxxxxxx）：\n\n"
-                "💡 卡密请联系管理员购买",
+                "🔽 请输入卡密（卡密格式：X-xxxxxxxxxxxx）：\n\n💡 卡密请联系管理员购买",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ 取消", callback_data="menu_home"),
                 ]]))
             return
 
-        # ── Card activation result ──
         if data.startswith("card_"):
             card_code = data[5:]
             if not card_code:
@@ -210,7 +209,6 @@ async def handle_callback(update, context):
                 ]]))
             return
 
-        # ── Invite code generation ──
         if data == "invite_gen":
             code = "INV-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
             await save_invite_db(code, user_id)
@@ -226,22 +224,19 @@ async def handle_callback(update, context):
                 ]]))
             return
 
-        # ── Page info ──
         if data == "page_info":
             await query.answer("使用下方按钮翻页", show_alert=False)
             return
 
-        # ── Admin-only callbacks ──
+        # ── Admin-only ──
         if user_id not in ADMIN_IDS:
-            logger.warning("Non-admin user %s attempted admin callback: %s", user_id, data)
             return
 
         if data == "admin_setvip_prompt":
             admin_setvip_state[user_id] = True
             await query.edit_message_text(
                 "请输入用户ID和天数（用空格分隔）:\n"
-                "例如: 123456789 30 （30天VIP）\n"
-                "不带天数则为永久VIP",
+                "例如: 123456789 30 （30天VIP）\n不带天数则为永久VIP",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ 取消", callback_data="menu_home")
                 ]]))
@@ -274,21 +269,17 @@ async def handle_callback(update, context):
                         InlineKeyboardButton("🏠 返回主页", callback_data="menu_home"),
                     ]]))
                 return
-
             lines = []
+            ct_map = {"month": "月卡(30天)", "quarter": "季卡(90天)", "year": "年卡(360天)", "forever": "永久"}
             for c in unused:
                 ct = c.get("card_type", "?")
-                ct_map = {"month": "月卡(30天)", "quarter": "季卡(90天)", "year": "年卡(360天)", "forever": "永久"}
-                label = ct_map.get(ct, ct)
-                lines.append(f"{c['code']} — {label}")
+                lines.append(f"{c['code']} — {ct_map.get(ct, ct)}")
             text = "\n".join(lines)
             if len(text) > 4000:
-                parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
-                for part in parts:
-                    await context.bot.send_message(chat_id=user_id, text=f"<code>{html.escape(part)}</code>", parse_mode="HTML")
+                for i in range(0, len(text), 4000):
+                    await context.bot.send_message(chat_id=user_id, text=f"<code>{html.escape(text[i:i+4000])}</code>", parse_mode="HTML")
             else:
                 await context.bot.send_message(chat_id=user_id, text=f"<code>{html.escape(text)}</code>", parse_mode="HTML")
-
             await query.edit_message_text("📜 卡密已发送到聊天中。",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")
@@ -296,7 +287,7 @@ async def handle_callback(update, context):
             return
 
     except Exception as e:
-        logger.error("Callback handler error for data=%s: %s", data, e)
+        logger.error("Callback error data=%s: %s", data, e)
         try:
             await query.edit_message_text("❌ 操作出错，请重试",
                 reply_markup=InlineKeyboardMarkup([[
@@ -306,8 +297,109 @@ async def handle_callback(update, context):
             pass
 
 
+# ── Video Playback ──
+
+
+async def _handle_play(query, context, data):
+    """Handle video playback request."""
+    # data format: play_{source}_{url_key}
+    parts = data.split("_", 2)
+    if len(parts) < 3:
+        await query.answer("❌ 无效的播放请求", show_alert=True)
+        return
+
+    source = parts[1]
+    url_key = parts[2]
+
+    # Get the original URL from url_store
+    original_url = get_url(url_key)
+    if not original_url:
+        await query.answer("❌ 视频链接已过期，请重新搜索", show_alert=True)
+        return
+
+    logger.info("Play request: source=%s url=%s", source, original_url)
+
+    # Get video detail from the appropriate scraper
+    try:
+        video_url = None
+        detail = None
+
+        # Call the appropriate get_video_detail
+        if source == "guochan":
+            from scrapers.guochan import get_video_detail as gd
+            video_url = await gd(original_url)
+        elif source == "hanime":
+            from scrapers.hanime import get_video_detail as gd
+            detail = await gd(original_url)
+            if detail:
+                # Prefer 720p, fallback to any
+                for q in ["720p", "480p", "360p", "mp4", "hls"]:
+                    if q in detail:
+                        video_url = detail[q]
+                        break
+        elif source == "jav":
+            from scrapers.jav import get_video_detail as gd
+            detail = await gd(original_url)
+            if detail and "mp4" in detail:
+                video_url = detail["mp4"]
+        elif source == "jav_id":
+            from scrapers.jav_id import get_video_detail as gd
+            detail = await gd(original_url)
+            if detail and "magnets" in detail:
+                # For jav_id, send magnet link
+                await query.message.reply_text(
+                    f"🔗 磁力链接:\n<code>{detail['magnets'][0]}</code>",
+                    parse_mode="HTML",
+                )
+                await query.answer("✅ 已发送磁力链接", show_alert=False)
+                return
+        elif source == "oumei":
+            from scrapers.oumei import get_video_detail as gd
+            detail = await gd(original_url)
+            if detail:
+                for q in ["720p", "480p", "mp4"]:
+                    if q in detail:
+                        video_url = detail[q]
+                        break
+        else:
+            # Unknown source, just send the original URL
+            video_url = original_url
+
+        if video_url:
+            # Send video to user
+            await query.answer("✅ 正在加载视频...", show_alert=False)
+            try:
+                await context.bot.send_video(
+                    chat_id=query.message.chat_id,
+                    video=video_url,
+                    caption=f"🎬 {source} 视频",
+                    supports_streaming=True,
+                )
+            except Exception as ve:
+                logger.warning("send_video failed: %s, trying send_message with URL", ve)
+                await query.message.reply_text(
+                    f"▶️ <a href=\"{html.escape(video_url)}\">点击播放视频</a>",
+                    parse_mode="HTML",
+                )
+        else:
+            # No video URL found, send original page as fallback
+            await query.message.reply_text(
+                f"🔗 <a href=\"{html.escape(original_url)}\">点击查看原始页面</a>",
+                parse_mode="HTML",
+            )
+            await query.answer("⚠️ 无法提取视频直链，已发送原始链接", show_alert=True)
+
+    except Exception as e:
+        logger.error("Play error: %s", e)
+        await query.message.reply_text(
+            f"🔗 <a href=\"{html.escape(original_url)}\">点击查看视频页面</a>",
+            parse_mode="HTML",
+        )
+        await query.answer("❌ 视频加载失败", show_alert=True)
+
+
 async def _build_keyboard_with_category(user_id: int, category: str):
-    """Build search keyboard with current category."""
+    """Build search keyboard."""
     from bot_utils import build_search_keyboard
     return await build_search_keyboard(user_id, [
         [InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")],

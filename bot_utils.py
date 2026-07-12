@@ -37,19 +37,17 @@ _ONE_DAY: int = 86400
 CATEGORY_LABELS = {
     "all": "全部",
     "guochan": "国产",
-    "hanime": "里番",
     "jav": "日韩",
     "oumei": "欧美",
     "jav_id": "番号",
 }
 
 CATEGORY_BUTTONS = [
-    [InlineKeyboardButton("🇨🇳 国产", callback_data="cat_guochan"),
-     InlineKeyboardButton("🇰🇷 日韩", callback_data="cat_jav"),
-     InlineKeyboardButton("🎹 里番", callback_data="cat_hanime"),
-     InlineKeyboardButton("🌏 欧美", callback_data="cat_oumei")],
-    [InlineKeyboardButton("📗 番号", callback_data="cat_jav_id"),
-     InlineKeyboardButton("🔪 全部源", callback_data="cat_all")],
+    [InlineKeyboardButton("全部", callback_data="cat_all"),
+     InlineKeyboardButton("国产", callback_data="cat_guochan"),
+     InlineKeyboardButton("日韩", callback_data="cat_jav"),
+     InlineKeyboardButton("欧美", callback_data="cat_oumei"),
+     InlineKeyboardButton("番号", callback_data="cat_jav_id")],
 ]
 
 PURCHASE_URL: str = "https://t.me/xiuren88bot?start=buy_524"

@@ -1,4 +1,4 @@
-﻿"""handlers_search.py — Search logic with progressive display and cache support."""
+﻿"""handlers_search.py — Search logic with video playback."""
 import asyncio
 import html
 import logging
@@ -8,14 +8,13 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot_utils import (
     now_ts, is_vip, check_rate_limit,
-    user_waiting_search, user_category,
     ALL_USERS, RESULTS_PER_PAGE,
-    CATEGORY_LABELS, build_search_keyboard,
+    CATEGORY_LABELS, store_url,
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
 from pre_cache import cache_get, cache_set, track_search
 import scrapers
-from scrapers import search_all, _ensure_built, get_scraper, CATEGORIES, CATEGORY_LABELS as SCRAPER_LABELS
+from scrapers import search_all, _ensure_built, get_scraper, CATEGORIES
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -45,30 +44,23 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
     if not user_id or not msg:
         return
 
-    # Track new users
     if user_id not in ALL_USERS:
         ALL_USERS.add(user_id)
         asyncio.create_task(db_add_user(user_id))
         asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "new_users"))
 
-    # Rate limit
     if not is_vip(user_id) and not await check_rate_limit(user_id):
         try:
-            await msg.edit_text(
-                "\u23f1\ufe0f 操作太频繁了，请稍后再试～\n开通VIP可无限搜索！"
-            )
+            await msg.edit_text("\u23f1\ufe0f 操作太频繁了，请稍后再试～\n开通VIP可无限搜索！")
         except Exception:
             pass
         return
 
-    cat_label = CATEGORY_LABELS.get(category, "\u5168\u90e8")
-
-    # Log search + track popularity
     asyncio.create_task(db_add_search_history(user_id, keyword))
     asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "searches"))
     asyncio.create_task(track_search(keyword))
 
-    # 1. Try cache first (instant)
+    # Try cache first
     cached_results = await cache_get(keyword)
     if cached_results is not None:
         try:
@@ -81,11 +73,10 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
         logger.info("Cache HIT for '%s' (%d results)", keyword, len(cached_results))
         entry = {"keyword": keyword, "category": category, "results": cached_results, "ts": now_ts()}
         await _show_results_page(msg, entry, 1)
-        # Trigger async refresh
         asyncio.create_task(_async_refresh(keyword, category))
         return
 
-    # 2. Cache miss — live search all sources in parallel
+    # Live search
     try:
         await msg.edit_text(f"\U0001f50d 正在搜索 <b>{html.escape(keyword)}</b> ...", parse_mode="HTML")
     except Exception:
@@ -93,16 +84,15 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
 
     results = await asyncio.wait_for(
         search_all(keyword, category, config.MAX_SEARCH_RESULTS),
-        timeout=20.0,
+        timeout=25.0,
     )
 
     if results:
-        # Cache results
         asyncio.create_task(cache_set(keyword, results))
         entry = {"keyword": keyword, "category": category, "results": results, "ts": now_ts()}
         await _show_results_page(msg, entry, 1)
     else:
-        # No results — show empty with retry button
+        cat_label = CATEGORY_LABELS.get(category, "\u5168\u90e8")
         try:
             await msg.edit_text(
                 f"\u274c 没有找到 <b>{html.escape(keyword)}</b> 在 <b>{cat_label}</b> 中的结果",
@@ -116,7 +106,6 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
 
 
 async def _async_refresh(keyword, category="all"):
-    """Async refresh cache in background."""
     try:
         results = await asyncio.wait_for(
             search_all(keyword, category, config.MAX_SEARCH_RESULTS),
@@ -130,13 +119,7 @@ async def _async_refresh(keyword, category="all"):
 
 
 async def _show_results_page(msg, search_entry, page=1):
-    """Display a page of search results.
-
-    Args:
-        msg: Message object to edit
-        search_entry: dict with results/keyword/category
-        page: Page number (1-indexed)
-    """
+    """Display search results with play buttons."""
     results = search_entry["results"]
     keyword = search_entry["keyword"]
     cur_cat = search_entry.get("category", "all")
@@ -148,9 +131,9 @@ async def _show_results_page(msg, search_entry, page=1):
     end_idx = min(start_idx + RESULTS_PER_PAGE, total)
     page_results = results[start_idx:end_idx]
 
-    # Build category switch row
-    cat_row = []
+    # Category row
     _ensure_built()
+    cat_row = []
     for cid, cinfo in scrapers.CATEGORIES.items():
         label = cinfo["label"]
         if cid == cur_cat:
@@ -160,35 +143,48 @@ async def _show_results_page(msg, search_entry, page=1):
 
     btns = [cat_row]
 
-    # Build result text
+    # Store URLs and build buttons
     parts = [
         f"\U0001f50d <b>{html.escape(keyword)}</b>  (共{total}个  第{page}/{total_pages}页)"
     ]
 
+    result_btns = []
     for i, r in enumerate(page_results):
         idx = start_idx + i + 1
         title = r.get("title", "?")[:60]
-        source_label = r.get("source_label", "")
         duration = r.get("duration", "")
         url = r.get("url", "")
+        source = r.get("source", "")
 
-        parts.append(f"\n{idx}. <a href=\"{html.escape(url)}\">{html.escape(title)}</a>")
-        dur_str = f"  \u23f1{duration}" if duration else ""
-        parts.append(f"   {source_label}{dur_str}")
+        # Store URL for playback callback
+        url_key = await store_url(url, source=source, keyword=keyword)
 
-    # Navigation buttons
+        # Format: 🎬[02:20] Title
+        dur_str = f"[{duration}]" if duration else ""
+        clean_title = title.replace("[", "\u3010").replace("]", "\u3011")
+        parts.append(f"\n\U0001f3ac{dur_str} {html.escape(clean_title)}")
+
+        # Play button
+        result_btns.append(
+            InlineKeyboardButton(f"{idx}", callback_data=f"play_{source}_{url_key}")
+        )
+
+    if result_btns:
+        btns.append(result_btns)
+
+    # Navigation row
     nav_row = []
     if page > 1:
-        nav_row.append(InlineKeyboardButton("\u25c0 上一页", callback_data=f"page_{keyword}_{page - 1}_{cur_cat}"))
+        nav_row.append(InlineKeyboardButton("\u25c0", callback_data=f"pg_{keyword}_{page-1}_{cur_cat}"))
     nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="page_info"))
     if page < total_pages:
-        nav_row.append(InlineKeyboardButton("下一页 \u25b6", callback_data=f"page_{keyword}_{page + 1}_{cur_cat}"))
+        nav_row.append(InlineKeyboardButton("\u25b6", callback_data=f"pg_{keyword}_{page+1}_{cur_cat}"))
     if nav_row:
         btns.append(nav_row)
 
-    # Bottom action buttons
+    # Bottom actions
     btns.append([
-        InlineKeyboardButton("\U0001f504 重新搜索", callback_data=f"resrch_{keyword}_{cur_cat}"),
+        InlineKeyboardButton("\U0001f504 重搜", callback_data=f"resrch_{keyword}_{cur_cat}"),
         InlineKeyboardButton("\U0001f3e0 主页", callback_data="menu_home"),
     ])
 
