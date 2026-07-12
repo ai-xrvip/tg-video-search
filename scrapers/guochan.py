@@ -1,10 +1,9 @@
-"""scrapers/guochan.py ? Scraper for 9191md.me (????)"""
+﻿"""scrapers/guochan.py — Scraper for 9191md.me (国产) using curl_cffi for Cloudflare bypass"""
 import asyncio
 import logging
 import re
 from typing import Optional
 
-import httpx
 from bs4 import BeautifulSoup
 
 from config import config
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class GuochanScraper(BaseScraper):
     name = "guochan"
-    label = "\U0001f1e8\U0001f1f3 \u56fd\u4ea7"
+    label = "\U0001f1e8\U0001f1f3 国产"
     base_url = config.GUOCHAN_BASE_URL
     timeout = config.SEARCH_TIMEOUT_GUOCHAN
     SEARCH_URL = f"{config.GUOCHAN_BASE_URL}/index.php/vod/search.html"
@@ -23,16 +22,26 @@ class GuochanScraper(BaseScraper):
     async def search(self, keyword: str, max_results: int = 15) -> list[VideoResult]:
         results = []
         try:
-            async with httpx.AsyncClient(
-                headers={"User-Agent": config.USER_AGENT, "Referer": self.base_url},
+            from curl_cffi.requests import AsyncSession
+
+            headers = {
+                "User-Agent": config.USER_AGENT,
+                "Referer": self.base_url,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            }
+
+            async with AsyncSession(
+                headers=headers,
                 timeout=self.timeout,
-                follow_redirects=True,
-                **self._get_httpx_kwargs(),
+                impersonate="chrome124",
+                proxies=self._get_proxy(),
             ) as client:
                 resp = await client.post(self.SEARCH_URL, data={"wd": keyword})
-                resp.raise_for_status()
                 html = resp.text
                 soup = BeautifulSoup(html, "html.parser")
+
+                # Try multiple selectors for video items
                 items = soup.select("div.detail_right_div ul li, li.vod-item")
                 if not items:
                     items = soup.find_all("li")
@@ -76,7 +85,7 @@ class GuochanScraper(BaseScraper):
                                 url=href,
                                 cover=cover,
                                 source="guochan",
-                                source_label="\U0001f1e8\U0001f1f3 \u56fd\u4ea7",
+                                source_label="\U0001f1e8\U0001f1f3 国产",
                                 views=views,
                                 date=date_text,
                             ))
@@ -84,10 +93,8 @@ class GuochanScraper(BaseScraper):
                         logger.debug("guochan item parse error: %s", e)
                         continue
 
-        except asyncio.TimeoutError:
-            logger.warning("guochan search timed out after %ss", self.timeout)
-        except httpx.HTTPStatusError as e:
-            logger.warning("guochan HTTP error: %s", e)
+        except ImportError:
+            logger.error("guochan: curl_cffi not installed")
         except Exception as e:
             logger.error("guochan search error: %s", e)
 
@@ -97,13 +104,14 @@ class GuochanScraper(BaseScraper):
 async def get_video_detail(url: str) -> Optional[str]:
     """Extract the video m3u8 URL from a 9191md.me video page."""
     try:
-        async with httpx.AsyncClient(
-            headers={"User-Agent": config.USER_AGENT, "Referer": config.GUOCHAN_BASE_URL},
-            timeout=config.SEARCH_TIMEOUT_GUOCHAN,
-            follow_redirects=True,
-        ) as client:
+        from curl_cffi.requests import AsyncSession
+        from scrapers.base import get_scraper
+        scraper_cls = get_scraper("guochan")
+        proxy = scraper_cls()._get_proxy() if scraper_cls else None
+
+        headers = {"User-Agent": config.USER_AGENT, "Referer": config.GUOCHAN_BASE_URL}
+        async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_GUOCHAN, impersonate="chrome124", proxies=proxy) as client:
             resp = await client.get(url)
-            resp.raise_for_status()
             html = resp.text
             m = re.search(r'"url"\s*:\s*"([^"]+\.m3u8)"', html)
             if m:
