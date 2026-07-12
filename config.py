@@ -1,4 +1,4 @@
-"""Configuration for TG Video Search Bot"""
+﻿"""Configuration for TG Video Search Bot"""
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -14,17 +14,17 @@ class Config:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 
     # Search settings
-    MAX_SEARCH_RESULTS: int = int(os.getenv("MAX_SEARCH_RESULTS", "20"))
+    MAX_SEARCH_RESULTS: int = int(os.getenv("MAX_SEARCH_RESULTS", "30"))
     MAX_RESULTS_PER_SOURCE: int = int(os.getenv("MAX_RESULTS_PER_SOURCE", "10"))
 
     # Source URLs
-    GUOCHAN_BASE_URL: str = "https://www.9191md.me"
-    HANIME_BASE_URL: str = "https://hanime1.me"
-    JAV_BASE_URL: str = "https://missav.ws"
-    OUMEI_BASE_URL: str = "https://www.xvideos.com"
+    XCHINA_BASE_URL: str = os.getenv("XCHINA_BASE_URL", "https://xchina.co")
+    HANIME_BASE_URL: str = os.getenv("HANIME_BASE_URL", "https://hanime1.me")
+    JAV_BASE_URL: str = os.getenv("JAV_BASE_URL", "https://missav.ws")
+    OUMEI_BASE_URL: str = os.getenv("OUMEI_BASE_URL", "https://www.xvideos.com")
 
     # Search timeouts per source
-    SEARCH_TIMEOUT_GUOCHAN: float = float(os.getenv("SEARCH_TIMEOUT_GUOCHAN", "6.0"))
+    SEARCH_TIMEOUT_XCHINA: float = float(os.getenv("SEARCH_TIMEOUT_XCHINA", "8.0"))
     SEARCH_TIMEOUT_HANIME: float = float(os.getenv("SEARCH_TIMEOUT_HANIME", "8.0"))
     SEARCH_TIMEOUT_JAV: float = float(os.getenv("SEARCH_TIMEOUT_JAV", "6.0"))
     SEARCH_TIMEOUT_OUMEI: float = float(os.getenv("SEARCH_TIMEOUT_OUMEI", "6.0"))

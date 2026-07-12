@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ---- Constants ----
 _SEARCH_TIMEOUTS: dict[str, float] = {
+    "xchina": 8.0,
     "guochan": config.SEARCH_TIMEOUT_GUOCHAN,
     "hanime": config.SEARCH_TIMEOUT_HANIME,
     "jav": config.SEARCH_TIMEOUT_JAV,
@@ -33,14 +34,11 @@ RATE_LIMIT_WINDOW: int = 60
 RATE_LIMIT_MAX: int = config.MAX_SEARCHES_PER_MINUTE
 _ONE_DAY: int = 86400
 
-# ---- Category info ----
-CATEGORY_LABELS = {
-    "all": "全部",
-    "guochan": "国产",
-    "jav": "日韩",
-    "oumei": "欧美",
-    "jav_id": "番号",
-}
+# ---- Category info (from scrapers) ----
+# Use fixed labels from scrapers/__init__
+from scrapers.__init__ import CATEGORY_LABEL_MAP as _SRC_CAT_LABELS
+
+CATEGORY_LABELS = dict(_SRC_CAT_LABELS)
 
 CATEGORY_BUTTONS = [
     [InlineKeyboardButton("全部", callback_data="cat_all"),
@@ -115,7 +113,7 @@ ADMIN_IDS: set[int] = config.ADMIN_IDS
 # ---- Keyboards ----
 MENU_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("🔍 搜索"), KeyboardButton("💎 VIP"), KeyboardButton("🙋 我的")],
-    [KeyboardButton("📉 帮助")],
+    [KeyboardButton("📖 帮助")],
 ], resize_keyboard=True)
 
 START_TEXT: str = """<b>🚀 TG视频搜索Bot 🚀</b>
@@ -123,18 +121,15 @@ START_TEXT: str = """<b>🚀 TG视频搜索Bot 🚀</b>
 💢 主人好呀～我是你的专属视频小助手！
 
 📰 <b>我能做什么？</b>
-• 🔍 海量视频随意搜（国产/日韩/里番/欧美/番号）
-• 🖼 支持切换分类搜索
-• 📫 直接播放视频
-
-💄 资源每日更新，再也不怕片荒啦～
+• 🔍 海量视频随意搜（全部/国产/日韩/欧美/番号）
+• 📫 点击结果直接播放视频
 
 💞 点击下方按钮开始探索吧！"""
 
 START_KEYBOARD = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔍 搜索视频", callback_data="menu_search")],
     [InlineKeyboardButton("💎 开通VIP", callback_data="menu_vip")],
-    [InlineKeyboardButton("📉 使用帮助", callback_data="menu_help")],
+    [InlineKeyboardButton("📖 使用帮助", callback_data="menu_help")],
 ])
 
 VIP_TEXT: str = """<b>💎 VIP 会员说明</b>
@@ -156,7 +151,7 @@ def now_ts() -> float:
 
 async def safe_search_wrapper(name: str, coro):
     """Run a search coroutine with its configured timeout."""
-    timeout = _SEARCH_TIMEOUTS.get(name, 6.0)
+    timeout = _SEARCH_TIMEOUTS.get(name, 8.0)
     try:
         return await asyncio.wait_for(coro, timeout=timeout)
     except asyncio.TimeoutError:
@@ -283,7 +278,7 @@ def format_duration(seconds: int) -> str:
 
 
 async def build_search_keyboard(user_id: int, extra_buttons=None):
-    """Build inline keyboard with hot keywords and category buttons."""
+    """Build inline keyboard with category buttons and hot keywords."""
     buttons = []
     buttons.append(CATEGORY_BUTTONS[0])
 
@@ -291,7 +286,7 @@ async def build_search_keyboard(user_id: int, extra_buttons=None):
     if history:
         hist_row = []
         for kw in history[:3]:
-            hist_row.append(InlineKeyboardButton("🀲 %s" % kw, callback_data="hot_%s" % html.escape(kw)))
+            hist_row.append(InlineKeyboardButton("🔄 %s" % kw, callback_data="hot_%s" % html.escape(kw)))
         if hist_row:
             buttons.append(hist_row)
 

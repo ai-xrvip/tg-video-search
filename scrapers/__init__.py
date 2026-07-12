@@ -1,4 +1,4 @@
-"""scrapers/__init__.py — Unified search interface with parallel source execution."""
+﻿"""scrapers/__init__.py — Unified search interface with fixed category-to-source mapping."""
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +13,24 @@ logger = logging.getLogger(__name__)
 CATEGORIES: dict[str, dict] = {}
 CATEGORY_LABELS: dict[str, str] = {}
 _built = False
+
+# Fixed source mapping: each category maps to specific scraper names
+# "全部" searches ALL scrapers in the defined source list below
+CATEGORY_SOURCES = {
+    "all":     ["xchina", "hanime", "jav", "oumei", "jav_id"],
+    "guochan": ["xchina"],
+    "jav":     ["jav"],
+    "oumei":   ["oumei"],
+    "jav_id":  ["jav_id"],
+}
+
+CATEGORY_LABEL_MAP = {
+    "all": "全部",
+    "guochan": "国产",
+    "jav": "日韩",
+    "oumei": "欧美",
+    "jav_id": "番号",
+}
 
 
 def _discover_scrapers():
@@ -36,21 +54,21 @@ def _discover_scrapers():
 
 
 def _build_categories():
-    """Auto-build CATEGORIES dict from registered scrapers."""
+    """Build CATEGORIES dict from fixed source mappings."""
     global CATEGORIES, CATEGORY_LABELS
-    sources = list_scrapers()
     CATEGORIES.clear()
-    _new = {
-        "all": {"label": "🔪 全部", "sources": list(sources)},
-    }
-    for name in sources:
-        cls = get_scraper(name)
-        if cls:
-            _new[name] = {"label": cls.label, "sources": [name]}
-    CATEGORIES.update(_new)
-
     CATEGORY_LABELS.clear()
+
+    for cat_id, sources in CATEGORY_SOURCES.items():
+        # Only include sources that actually have registered scrapers
+        valid_sources = [s for s in sources if get_scraper(s) is not None]
+        CATEGORIES[cat_id] = {
+            "label": CATEGORY_LABEL_MAP.get(cat_id, cat_id),
+            "sources": valid_sources,
+        }
+
     CATEGORY_LABELS.update({k: v["label"] for k, v in CATEGORIES.items()})
+    logger.info("Built %d categories: %s", len(CATEGORIES), list(CATEGORIES.keys()))
 
 
 def _ensure_built():
@@ -93,10 +111,10 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
     all_results: list[VideoResult] = []
     source_order = {s: i for i, s in enumerate(source_names)}
 
-    # Wait for all tasks with a hard timeout (15s)
+    # Wait for all tasks with a timeout (20s total)
     done, pending = await asyncio.wait(
         tasks.values(),
-        timeout=15.0,
+        timeout=20.0,
         return_when=asyncio.ALL_COMPLETED,
     )
 
