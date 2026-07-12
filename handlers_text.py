@@ -149,4 +149,12 @@ async def handle_text(update, context):
         await _do_search(update, keyword, category)
         return
 
+    # Default: any text = search
+    if text and len(text) >= 1:
+        user_waiting_search.discard(user_id)
+        user_waiting_card.discard(user_id)
+        category = user_category.get(user_id, "all")
+        await _do_search(update, text, category)
+        return
+
     return

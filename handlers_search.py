@@ -16,8 +16,8 @@ from bot_utils import (
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
 from pre_cache import search_with_cache, cache_get, track_search
-from scrapers import search_all, CATEGORIES
-from scrapers import _ensure_built, get_scraper
+import scrapers
+from scrapers import search_all, _ensure_built, get_scraper
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
 
     # 2. Cache miss — build per-source search tasks
     _ensure_built()
-    cat_config = CATEGORIES.get(category, CATEGORIES.get("all", {}))
+    cat_config = scrapers.CATEGORIES.get(category, scrapers.CATEGORIES.get("all", {}))
     source_names = cat_config.get("sources", [])
     results_per_source = max(config.MAX_SEARCH_RESULTS // max(len(source_names), 1), 5)
 
