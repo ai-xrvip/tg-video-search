@@ -31,6 +31,7 @@ from handlers_commands import (
 from handlers_callbacks import handle_callback
 from handlers_text import handle_text
 from handlers_inline import inline_search
+from pre_cache import start_pre_cache, stop_pre_cache
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ async def _startup(application):
         await _load_data()
         # Start background tasks
         asyncio.create_task(_periodic_cleanup(application))
+        asyncio.create_task(start_pre_cache())
         # Set bot commands
         from telegram import BotCommand
         await application.bot.set_my_commands([
@@ -140,6 +142,7 @@ async def shutdown(app, signal_str=None):
     else:
         logger.info("Shutting down...")
     try:
+        await stop_pre_cache()
         await stop_database()
         await app.stop()
         await app.shutdown()

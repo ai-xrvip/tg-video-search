@@ -7,12 +7,15 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot_utils import (
+    safe_search_wrapper,
+
     now_ts, is_vip, check_rate_limit, store_url, get_url,
     user_waiting_search, user_category,
     VIP_USERS, ALL_USERS, RESULTS_PER_PAGE,
     CATEGORY_LABELS, CATEGORY_BUTTONS,
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
+from pre_cache import search_with_cache, cache_get, track_search
 from scrapers import search_all, CATEGORIES
 from scrapers import _ensure_built, get_scraper
 from config import config
@@ -31,6 +34,21 @@ async def _clean_search_cache():
         expired = [sid for sid, e in list(_search_cache.items()) if now - e.get("ts", 0) > _SEARCH_CACHE_TTL]
         for sid in expired:
             del _search_cache[sid]
+
+
+async def _async_refresh(keyword, category="all"):
+    """Async refresh cache in background without blocking user."""
+    try:
+        results = await asyncio.wait_for(
+            search_all(keyword, category, config.MAX_SEARCH_RESULTS),
+            timeout=15.0,
+        )
+        if results:
+            from pre_cache import cache_set
+            await cache_set(keyword, results)
+            logger.info("Async refresh: cached '%s' (%d)", keyword, len(results))
+    except Exception as e:
+        logger.debug("Async refresh error: %s", e)
 
 
 async def _do_search(update_or_msg, keyword, category="all", page=1):
@@ -80,11 +98,27 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
 
     cat_label = CATEGORY_LABELS.get(category, "\u5168\u90e8")
 
-    # Log search
+    # Log search + track popularity
     asyncio.create_task(db_add_search_history(user_id, keyword))
     asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "searches"))
+    asyncio.create_task(track_search(keyword))
 
-    # Build per-source search tasks
+    # 1. Try cache first (instant)
+    cached_results = await cache_get(keyword)
+    if cached_results is not None:
+        try:
+            await msg.edit_text("\\U0001f50d <b>{}<\\b>  \\u2212 \\u7f13\\u5b58\\u547d\\u4e2d ({} \\u4e2a\\u7ed3\\u679c)".format(
+                html.escape(keyword), len(cached_results)), parse_mode="HTML")
+        except Exception:
+            pass
+        logger.info("Cache HIT for '%s' (%d results)", keyword, len(cached_results))
+        entry = {"keyword": keyword, "category": category, "results": cached_results, "ts": now_ts()}
+        await _show_results_page(msg, entry, 1)
+        # Trigger async refresh without blocking
+        asyncio.create_task(_async_refresh(keyword, category))
+        return
+
+    # 2. Cache miss — build per-source search tasks
     _ensure_built()
     cat_config = CATEGORIES.get(category, CATEGORIES.get("all", {}))
     source_names = cat_config.get("sources", [])

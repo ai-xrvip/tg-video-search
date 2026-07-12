@@ -15,6 +15,7 @@ from bot_utils import (
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
 from scrapers import search_all, CATEGORIES
+from pre_cache import search_with_cache, cache_get, track_search
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -76,18 +77,25 @@ async def inline_search(update, context):
 
     asyncio.create_task(db_add_search_history(user_id, keyword))
     asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "searches"))
+    asyncio.create_task(track_search(keyword))
 
-    # Show searching indicator
-    try:
-        results = await asyncio.wait_for(
-            search_all(keyword, category, config.MAX_SEARCH_RESULTS),
-            timeout=25.0,
-        )
-    except asyncio.TimeoutError:
-        results = []
-    except Exception as e:
-        logger.error("Inline search error: %s", e)
-        results = []
+    # Try cache first
+    cached_results = await cache_get(keyword)
+    if cached_results is not None:
+        results = cached_results
+    else:
+
+        # Show searching indicator
+        try:
+            results = await asyncio.wait_for(
+                search_all(keyword, category, config.MAX_SEARCH_RESULTS),
+                timeout=25.0,
+            )
+        except asyncio.TimeoutError:
+            results = []
+        except Exception as e:
+            logger.error("Inline search error: %s", e)
+            results = []
 
     if not results:
         result_item = InlineQueryResultArticle(
