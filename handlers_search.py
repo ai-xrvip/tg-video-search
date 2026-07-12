@@ -93,7 +93,7 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
     try:
         results = await asyncio.wait_for(
             search_all(keyword, category, config.MAX_SEARCH_RESULTS),
-            timeout=25.0,
+            timeout=10.0,
         )
     except asyncio.TimeoutError:
         try:

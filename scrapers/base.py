@@ -74,7 +74,7 @@ class BaseScraper(abc.ABC):
 
     async def search_with_retry(
         self, keyword: str, max_results: int = 15,
-        max_retries: int = 2, base_delay: float = 1.0,
+        max_retries: int = 1, base_delay: float = 0.5,
     ) -> list[VideoResult]:
         """Search with automatic retry + exponential backoff."""
         last_exc = None

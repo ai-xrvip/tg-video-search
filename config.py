@@ -14,8 +14,8 @@ class Config:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 
     # Search settings
-    MAX_SEARCH_RESULTS: int = int(os.getenv("MAX_SEARCH_RESULTS", "30"))
-    MAX_RESULTS_PER_SOURCE: int = int(os.getenv("MAX_RESULTS_PER_SOURCE", "15"))
+    MAX_SEARCH_RESULTS: int = int(os.getenv("MAX_SEARCH_RESULTS", "20"))
+    MAX_RESULTS_PER_SOURCE: int = int(os.getenv("MAX_RESULTS_PER_SOURCE", "10"))
 
     # Source URLs
     GUOCHAN_BASE_URL: str = "https://www.9191md.me"
@@ -24,10 +24,10 @@ class Config:
     OUMEI_BASE_URL: str = "https://www.xvideos.com"
 
     # Search timeouts per source
-    SEARCH_TIMEOUT_GUOCHAN: float = float(os.getenv("SEARCH_TIMEOUT_GUOCHAN", "10.0"))
-    SEARCH_TIMEOUT_HANIME: float = float(os.getenv("SEARCH_TIMEOUT_HANIME", "12.0"))
-    SEARCH_TIMEOUT_JAV: float = float(os.getenv("SEARCH_TIMEOUT_JAV", "10.0"))
-    SEARCH_TIMEOUT_OUMEI: float = float(os.getenv("SEARCH_TIMEOUT_OUMEI", "10.0"))
+    SEARCH_TIMEOUT_GUOCHAN: float = float(os.getenv("SEARCH_TIMEOUT_GUOCHAN", "6.0"))
+    SEARCH_TIMEOUT_HANIME: float = float(os.getenv("SEARCH_TIMEOUT_HANIME", "8.0"))
+    SEARCH_TIMEOUT_JAV: float = float(os.getenv("SEARCH_TIMEOUT_JAV", "6.0"))
+    SEARCH_TIMEOUT_OUMEI: float = float(os.getenv("SEARCH_TIMEOUT_OUMEI", "6.0"))
 
     # Proxy settings
     PROXY_ENABLED: bool = os.getenv("PROXY_ENABLED", "true").lower() in ("true", "1", "yes")

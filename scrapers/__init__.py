@@ -68,7 +68,11 @@ def _ensure_built():
 
 
 async def search_all(keyword: str, category: str = "all", max_results: int = 30) -> list[dict]:
-    """Search across all (or selected category) video sources."""
+    """Search across all video sources with race-based early return.
+
+    Returns results as soon as sources complete, with a hard overall timeout.
+    This ensures the bot responds quickly even if some sources are slow.
+    """
     _ensure_built()
 
     cat_config = CATEGORIES.get(category, CATEGORIES.get("all", {}))
@@ -76,8 +80,8 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
     if not source_names:
         return []
 
-    results_per_source = max(max_results // len(source_names), 5)
-    tasks = []
+    results_per_source = max(max_results // max(len(source_names), 1), 5)
+    tasks: list[tuple[str, asyncio.Task]] = []
 
     for src_name in source_names:
         cls = get_scraper(src_name)
@@ -85,18 +89,55 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
             logger.warning("No scraper registered for %s, skipping", src_name)
             continue
         scraper = cls()
-        tasks.append(scraper.search_with_retry(keyword, results_per_source))
+        task = asyncio.create_task(scraper.search_with_retry(keyword, results_per_source))
+        tasks.append((src_name, task))
+
+    if not tasks:
+        return []
 
     all_results: list[VideoResult] = []
-    done = await asyncio.gather(*tasks, return_exceptions=True)
+    source_order = {s: i for i, s in enumerate(source_names)}
 
-    active_sources = [s for s in source_names if get_scraper(s) is not None]
-    for src_name, result in zip(active_sources, done):
-        if isinstance(result, Exception):
-            logger.error("%s search failed: %s", src_name, result)
-            continue
-        if result:
-            all_results.extend(result)
+    # Phase 1: Wait up to 4s for ANY results
+    pending = {name: task for name, task in tasks}
+    
+    if pending:
+        done_set, pending_set = await asyncio.wait(
+            list(pending.values()),
+            timeout=5.0,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in done_set:
+            task_name = next(n for n, t in pending.items() if t is task)
+            try:
+                result = task.result()
+                if result:
+                    all_results.extend(result)
+            except Exception as e:
+                logger.debug("%s search failed: %s", task_name, e)
+            del pending[task_name]
+
+        for t in pending_set:
+            t.cancel()
+
+    # Phase 2: Quick collect - wait 2s more for remaining fast sources
+    if pending:
+        await asyncio.sleep(2.0)
+        still_pending = dict(pending)
+        for src_name, task in still_pending.items():
+            if task.done():
+                try:
+                    result = task.result()
+                    if result:
+                        all_results.extend(result)
+                except Exception:
+                    pass
+                del pending[src_name]
+
+    # Cancel anything still running
+    for _, task in pending.items():
+        task.cancel()
 
     # Deduplicate by URL
     seen_urls: set[str] = set()
@@ -106,32 +147,10 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
             seen_urls.add(r.url)
             unique.append(r)
 
-    # Sort: source order preserved
-    source_order = {s: i for i, s in enumerate(source_names)}
+    # Sort by source order
     unique.sort(key=lambda r: source_order.get(r.source, 99))
 
-    # Limit total with balanced interleave
-    if len(unique) > max_results:
-        by_source: dict[str, list[VideoResult]] = {}
-        for r in unique:
-            by_source.setdefault(r.source, []).append(r)
-
-        balanced: list[VideoResult] = []
-        max_per = max(len(v) for v in by_source.values()) if by_source else 0
-        for i in range(max_per):
-            for src in source_names:
-                items = by_source.get(src, [])
-                if i < len(items):
-                    balanced.append(items[i])
-                    if len(balanced) >= max_results:
-                        break
-            if len(balanced) >= max_results:
-                break
-        unique = balanced[:max_results]
-
-    return [r.__dict__ for r in unique]
-
-
+    return [r.__dict__ for r in unique[:max_results]]
 async def search_category(keyword: str, category: str, max_results: int = 15) -> list[dict]:
     """Search within a single category/source."""
     return await search_all(keyword, category, max_results)
