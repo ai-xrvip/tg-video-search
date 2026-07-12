@@ -9,7 +9,7 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot_utils import (
-    now_ts, is_vip, store_url, get_url,
+    now_ts, is_vip, store_url, get_url, url_store,
     user_waiting_search, user_waiting_card, user_category,
     VIP_USERS, ALL_USERS, INVITES, ADMIN_IDS, admin_setvip_state,
     _ONE_DAY, CATEGORY_LABELS, PURCHASE_URL,
@@ -311,13 +311,17 @@ async def _handle_play(query, context, data):
     source = parts[1]
     url_key = parts[2]
 
-    # Get the original URL from url_store
-    original_url = get_url(url_key)
-    if not original_url:
+    # Get the original URL + title from url_store
+    entry = url_store.get(url_key)
+    if not entry:
         await query.answer("❌ 视频链接已过期，请重新搜索", show_alert=True)
         return
-
-    logger.info("Play request: source=%s url=%s", source, original_url)
+    original_url = str(entry.get("url", ""))
+    video_title = str(entry.get("title", ""))
+    if not original_url:
+        await query.answer("❌ 视频链接已过期", show_alert=True)
+        return
+    logger.info("Play request: source=%s title=%s", source, video_title[:40])
 
     # Get video detail from the appropriate scraper
     try:
@@ -372,7 +376,7 @@ async def _handle_play(query, context, data):
                 await context.bot.send_video(
                     chat_id=query.message.chat_id,
                     video=video_url,
-                    caption=f"🎬 {source} 视频",
+                    caption=f"🎬 {video_title}",
                     supports_streaming=True,
                 )
             except Exception as ve:
