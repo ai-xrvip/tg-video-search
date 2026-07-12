@@ -1,4 +1,4 @@
-﻿"""scrapers/__init__.py — Unified search interface with parallel source execution."""
+"""scrapers/__init__.py — Unified search interface with parallel source execution."""
 from __future__ import annotations
 
 import asyncio
@@ -39,15 +39,18 @@ def _build_categories():
     """Auto-build CATEGORIES dict from registered scrapers."""
     global CATEGORIES, CATEGORY_LABELS
     sources = list_scrapers()
-    CATEGORIES = {
-        "all": {"label": "\U0001f52a 全部", "sources": list(sources)},
+    CATEGORIES.clear()
+    _new = {
+        "all": {"label": "🔪 全部", "sources": list(sources)},
     }
     for name in sources:
         cls = get_scraper(name)
         if cls:
-            CATEGORIES[name] = {"label": cls.label, "sources": [name]}
+            _new[name] = {"label": cls.label, "sources": [name]}
+    CATEGORIES.update(_new)
 
-    CATEGORY_LABELS = {k: v["label"] for k, v in CATEGORIES.items()}
+    CATEGORY_LABELS.clear()
+    CATEGORY_LABELS.update({k: v["label"] for k, v in CATEGORIES.items()})
 
 
 def _ensure_built():
