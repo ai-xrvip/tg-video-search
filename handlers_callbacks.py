@@ -16,7 +16,7 @@ from bot_utils import (
     save_vip_db, save_invite_db,
     get_invite_lock, get_vip_lock,
 )
-from handlers_search import _do_search, _show_results_page
+from handlers_search import _do_search, _show_results
 from scrapers import CATEGORIES, _ensure_built
 from config import config
 from database import (
