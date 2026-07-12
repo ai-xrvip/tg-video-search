@@ -19,6 +19,13 @@ from database import (
 logger = logging.getLogger(__name__)
 
 # ---- Constants ----
+_SEARCH_TIMEOUTS: dict[str, float] = {
+    "guochan": config.SEARCH_TIMEOUT_GUOCHAN,
+    "hanime": config.SEARCH_TIMEOUT_HANIME,
+    "jav": config.SEARCH_TIMEOUT_JAV,
+    "oumei": config.SEARCH_TIMEOUT_OUMEI,
+    "jav_id": 8.0,
+}
 RESULTS_PER_PAGE: int = 5
 URL_TTL: int = 3600
 USER_STATE_TTL: int = 1800
@@ -147,6 +154,21 @@ VIP_TEXT: str = """<b>👑 VIP 会员说明</b>
 
 def now_ts() -> float:
     return datetime.now().timestamp()
+
+
+async def safe_search_wrapper(name: str, coro):
+    """Run a search coroutine with its configured timeout.
+    Returns [] on timeout or error (never raises).
+    """
+    timeout = _SEARCH_TIMEOUTS.get(name, 6.0)
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("%%s search timed out after %%ss", name, timeout)
+        return []
+    except Exception as e:
+        logger.error("%%s search error: %%s", name, e)
+        return []
 
 
 async def cleanup_url_store() -> None:

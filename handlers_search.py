@@ -14,6 +14,7 @@ from bot_utils import (
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
 from scrapers import search_all, CATEGORIES
+from scrapers import _ensure_built, get_scraper
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -33,30 +34,29 @@ async def _clean_search_cache():
 
 
 async def _do_search(update_or_msg, keyword, category="all", page=1):
-    """Handle a search request.
-
-    Accepts either a telegram.Update or a telegram.CallbackQuery as input.
-    Returns (user_id, chat_id) for the caller.
+    """Handle a search request with progressive display.
+    
+    Shows results progressively: first batch at 3s, update at 6s, then final.
     """
-    # Extract user_id, message object, and chat_id from update/query
     user_id = None
     msg = None
     chat_id = None
 
     if hasattr(update_or_msg, "effective_user"):
-        # Called from a command handler (telegram.Update)
         user_id = update_or_msg.effective_user.id
         chat_id = update_or_msg.effective_chat.id
-        # Send a "Searching..." placeholder
         try:
-            msg = await update_or_msg.message.reply_text("🔍 Searching...")
+            msg = await update_or_msg.message.reply_text("\U0001f50d Searching...")
         except Exception:
             return
     elif hasattr(update_or_msg, "message") and hasattr(update_or_msg, "from_user"):
-        # Called from a callback query handler (telegram.CallbackQuery)
         user_id = update_or_msg.from_user.id
         chat_id = update_or_msg.message.chat_id
-        msg = update_or_msg.message  # Edit the callback message directly
+        msg = update_or_msg.message
+        try:
+            msg = await msg.reply_text("\U0001f50d Searching...")
+        except Exception:
+            pass
     else:
         logger.error("Unknown update type: %s", type(update_or_msg))
         return
@@ -70,79 +70,175 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
         asyncio.create_task(db_add_user(user_id))
         asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "new_users"))
 
-    # Rate limit for non-VIP
+    # Rate limit
     if not is_vip(user_id) and not await check_rate_limit(user_id):
         try:
-            await msg.edit_text("⏱️ 操作太频繁了，请稍后再试～\n开通VIP可无限搜索！")
+            await msg.edit_text("\u23f1\ufe0f \u64cd\u4f5c\u592a\u9891\u7e41\u4e86\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\uff5e\n\u5f00\u901aVIP\u53ef\u65e0\u9650\u641c\u7d22\uff01")
         except Exception:
             pass
         return
 
-    cat_label = CATEGORY_LABELS.get(category, "全部")
-    status_text = f"🔍 正在搜索 <b>{html.escape(keyword)}</b> 在 <b>{cat_label}</b> 中..."
-    try:
-        await msg.edit_text(status_text, parse_mode="HTML")
-    except Exception:
-        pass
+    cat_label = CATEGORY_LABELS.get(category, "\u5168\u90e8")
 
     # Log search
     asyncio.create_task(db_add_search_history(user_id, keyword))
     asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "searches"))
 
-    # Perform the search
-    try:
-        results = await asyncio.wait_for(
-            search_all(keyword, category, config.MAX_SEARCH_RESULTS),
-            timeout=10.0,
-        )
-    except asyncio.TimeoutError:
+    # Build per-source search tasks
+    _ensure_built()
+    cat_config = CATEGORIES.get(category, CATEGORIES.get("all", {}))
+    source_names = cat_config.get("sources", [])
+    results_per_source = max(config.MAX_SEARCH_RESULTS // max(len(source_names), 1), 5)
+
+    tasks = []
+    task_names = []
+    for src_name in source_names:
+        cls = get_scraper(src_name)
+        if cls is None:
+            continue
+        scraper = cls()
+        task = asyncio.create_task(scraper.search_with_retry(keyword, results_per_source))
+        tasks.append(task)
+        task_names.append(src_name)
+
+    if not tasks:
         try:
-            await msg.edit_text("⏱️ 搜索超时，请重试", parse_mode="HTML")
-        except Exception:
-            pass
-        return
-    except Exception as e:
-        logger.error("Search error: %s", e)
-        try:
-            await msg.edit_text("❌ 搜索出错，请稍后重试", parse_mode="HTML")
+            await msg.edit_text("\u6ca1\u6709\u53ef\u7528\u7684\u641c\u7d22\u6e90")
         except Exception:
             pass
         return
 
-    if not results:
-        kb = InlineKeyboardMarkup([
-            CATEGORY_BUTTONS[0],
-            [InlineKeyboardButton("🔄 重试", callback_data=f"resrch_{keyword}_{category}")],
-            [InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")],
-        ])
+    # Progressive display: collect results at checkpoints
+    all_results = []
+    seen_urls = set()
+    displayed_once = False
+    pending_tasks = dict(zip(task_names, tasks))
+    name_map = {t: n for n, t in zip(task_names, tasks)}
+
+    checkpoints = [3.0, 5.0, None]  # 3s first batch, 5s update, then all remaining
+
+    for checkpoint in checkpoints:
+        remaining = {n: t for n, t in pending_tasks.items() if not t.done()}
+        if not remaining:
+            break
+
+        if checkpoint is not None:
+            done_set, _ = await asyncio.wait(
+                list(remaining.values()),
+                timeout=checkpoint,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        else:
+            done_set, _ = await asyncio.wait(
+                list(remaining.values()),
+                timeout=None,
+            )
+
+        # Collect completed tasks
+        for task in done_set:
+            src_name = name_map[task]
+            try:
+                results = task.result()
+                if results:
+                    new_count = 0
+                    for r in results:
+                        url = r.get("url", "") or getattr(r, "url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_results.append(r.__dict__ if hasattr(r, "__dict__") else r)
+                            new_count += 1
+                    if new_count > 0:
+                        logger.info("Progressive: +%d from %s", new_count, src_name)
+            except Exception as e:
+                logger.debug("%s search failed: %s", src_name, e)
+            del pending_tasks[src_name]
+
+        # Tasks not in done_set will be retried in the next checkpoint
+
+        if not all_results:
+            try:
+                status = f"\U0001f50d \u641c\u7d22 <b>{html.escape(keyword)}</b> \u5728 <b>{cat_label}</b>...\n\u5df2\u5b8c\u6210: {len(task_names) - len(pending_tasks)}/{len(task_names)}"
+                await msg.edit_text(status, parse_mode="HTML")
+            except Exception:
+                pass
+            continue
+
+        # First display or update
+        entry = {"keyword": keyword, "category": category, "results": all_results, "ts": now_ts()}
+        if not displayed_once:
+            await _show_results_page(msg, entry, 1)
+            displayed_once = True
+        else:
+            try:
+                await _show_results_page(msg, entry, 1)
+            except Exception:
+                pass
+
+    # Cancel anything still pending
+    for _, task in pending_tasks.items():
+        task.cancel()
+
+    # Cache for callback navigation
+    if all_results:
+        entry_for_cache = {"keyword": keyword, "category": category, "results": all_results, "ts": now_ts()}
+        global _search_counter
+        async with _search_cache_lock:
+            _search_counter += 1
+            search_id = str(_search_counter)
+            _search_cache[search_id] = entry_for_cache
+            # Clean old entries
+            now = now_ts()
+            expired = [sid for sid, e in list(_search_cache.items()) if now - e.get("ts", 0) > _SEARCH_CACHE_TTL]
+            for sid in expired:
+                del _search_cache[sid]
+
+    for _, task in pending_tasks.items():
+        task.cancel()
+
+    # Final display
+    if all_results:
+        entry = {"keyword": keyword, "category": category, "results": all_results, "ts": now_ts()}
+        await _show_results_page(msg, entry, 1)
+    else:
+        cat_label = CATEGORY_LABELS.get(category, "\u5168\u90e8")
         try:
             await msg.edit_text(
-                f"❌ 没有找到 <b>{html.escape(keyword)}</b> 在 <b>{cat_label}</b> 中的结果",
+                f"\u274c \u6ca1\u6709\u627e\u5230 <b>{html.escape(keyword)}</b> \u5728 <b>{cat_label}</b> \u4e2d\u7684\u7ed3\u679c",
                 parse_mode="HTML",
-                reply_markup=kb,
-            )
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("\U0001f504 \u91cd\u8bd5", callback_data=f"resrch_{keyword}_{category}"),
+                ]]))
         except Exception:
             pass
-        return
-
-    # Cache results
-    global _search_counter
-    async with _search_cache_lock:
-        _search_counter += 1
-        search_id = str(_search_counter)
-        _search_cache[search_id] = {
-            "results": results,
-            "keyword": keyword,
-            "category": category,
-            "chat_id": chat_id,
-            "ts": now_ts(),
-        }
-        await _clean_search_cache()
-
-    await _show_results_page(msg, search_id, 1)
-
-
-async def _show_results_page(msg, search_id, page=1):
+async def _show_results_page(msg, search_or_entry, page=1):
+    """Display a page of search results.
+    
+    Args:
+        msg: Message object to edit
+        search_or_entry: Either a search_id (str) or an entry dict with results/keyword/category
+        page: Page number (1-indexed)
+    """
+    # Support both cached search_id and direct entry dict
+    if isinstance(search_or_entry, str):
+        async with _search_cache_lock:
+            entry = _search_cache.get(search_or_entry)
+        if not entry:
+            try:
+                await msg.edit_text("\u232b \u641c\u7d22\u7ed3\u679c\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u641c\u7d22",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("\U0001f50d \u641c\u7d22", callback_data="menu_search")
+                    ]]))
+            except Exception:
+                pass
+            return
+        results = entry["results"]
+        keyword = entry["keyword"]
+        cur_cat = entry.get("category", "all")
+    else:
+        results = search_or_entry["results"]
+        keyword = search_or_entry["keyword"]
+        cur_cat = search_or_entry.get("category", "all")
+        entry = search_or_entry
     """Display a page of search results."""
     async with _search_cache_lock:
         entry = _search_cache.get(search_id)
