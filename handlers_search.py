@@ -9,24 +9,20 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from bot_utils import (
     now_ts, is_vip, check_rate_limit,
     ALL_USERS, store_url,
-    CATEGORY_LABELS,
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
 from pre_cache import cache_get, cache_set, track_search
-import scrapers
-from scrapers import search_all, _ensure_built
-from scrapers.__init__ import CATEGORY_SOURCES, CATEGORY_LABEL_MAP
+from scrapers.base import get_scraper
+from scrapers.__init__ import _ensure_built, CATEGORY_SOURCES, CATEGORY_LABEL_MAP
 from config import config
 
 logger = logging.getLogger(__name__)
 
 UI_PAGE_SIZE = 10
-# Category IDs shown in search results (ORDER matters)
 UI_CAT_IDS = ["all", "guochan", "jav", "oumei", "jav_id"]
 
 
 async def _do_search(update_or_msg, keyword, category="all", page=1):
-    """Run search and display results progressively."""
     user_id = None
     msg = None
 
@@ -85,8 +81,6 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
     all_results = []
     seen_urls = set()
 
-    # Create search tasks
-    from scrapers.base import get_scraper
     tasks = {}
     for src_name in source_names:
         cls = get_scraper(src_name)
@@ -104,7 +98,6 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
             pass
         return
 
-    # Progressive display: update as results come in
     displayed_once = False
     remaining = set(tasks.values())
     first_batch = True
@@ -134,7 +127,6 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
         remaining = pending
 
         if all_results and not displayed_once:
-            # First display
             try:
                 await msg.edit_text(
                     f"🔍 <b>{html.escape(keyword)}</b>  — 找到 {len(all_results)} 个结果",
@@ -147,12 +139,10 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
             displayed_once = True
             asyncio.create_task(cache_set(keyword, all_results))
         elif all_results and displayed_once and not remaining:
-            # Final update when all done
             asyncio.create_task(cache_set(keyword, all_results))
             entry = {"keyword": keyword, "category": category, "results": all_results, "ts": now_ts()}
             await _show_results(msg, entry, page)
 
-    # No results at all
     if not all_results:
         cat_label = CATEGORY_LABEL_MAP.get(category, "全部")
         try:
@@ -168,7 +158,6 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
 
 
 async def _show_results(msg, search_entry, page=1):
-    """Display results page with clickable titles and category buttons at bottom."""
     results = search_entry["results"]
     keyword = search_entry["keyword"]
     cur_cat = search_entry.get("category", "all")
@@ -182,7 +171,6 @@ async def _show_results(msg, search_entry, page=1):
 
     btns = []
 
-    # 1. Each result = full-width clickable button (title plays video)
     for i, r in enumerate(page_results):
         idx = start_idx + i + 1
         title = r.get("title", "?")[:55]
@@ -197,7 +185,6 @@ async def _show_results(msg, search_entry, page=1):
             InlineKeyboardButton(btn_text[:64], callback_data=f"play_{source}_{url_key}")
         ])
 
-    # 2. Category buttons at BOTTOM (no emoji flags, just text)
     cat_row = []
     for cid in UI_CAT_IDS:
         label = CATEGORY_LABEL_MAP.get(cid, cid)
@@ -207,7 +194,6 @@ async def _show_results(msg, search_entry, page=1):
             cat_row.append(InlineKeyboardButton(label, callback_data=f"catr_{keyword}_{cid}"))
     btns.append(cat_row)
 
-    # 3. Navigation + actions
     nav_row = []
     if page > 1:
         nav_row.append(InlineKeyboardButton("◀", callback_data=f"pg_{keyword}_{page-1}_{cur_cat}"))
@@ -220,7 +206,6 @@ async def _show_results(msg, search_entry, page=1):
         InlineKeyboardButton("🏠 主页", callback_data="menu_home"),
     ])
 
-    # Header: keyword + page info
     header = f"🔍 <b>{html.escape(keyword)}</b>  (共{total}个  第{page}/{total_pages}页)"
 
     try:

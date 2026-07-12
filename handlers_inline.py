@@ -10,19 +10,18 @@ from telegram import InlineQueryResultArticle, InputTextMessageContent, InlineKe
 
 from bot_utils import (
     now_ts, is_vip, check_rate_limit, user_category,
-    VIP_USERS, ALL_USERS, RESULTS_PER_PAGE,
+    VIP_USERS, ALL_USERS,
     CATEGORY_LABELS,
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
-from scrapers import search_all, CATEGORIES
-from pre_cache import search_with_cache, cache_get, track_search
+from scrapers import search_all
+from pre_cache import cache_get, track_search
 from config import config
 
 logger = logging.getLogger(__name__)
 
 
 async def inline_search(update, context):
-    """Handle inline query (@botname keyword)."""
     query = update.inline_query
     user_id = query.from_user.id
     keyword = query.query.strip()
@@ -44,13 +43,11 @@ async def inline_search(update, context):
         await query.answer(results, cache_time=10, is_personal=True)
         return
 
-    # Only track first-time users
     if user_id not in ALL_USERS:
         ALL_USERS.add(user_id)
         asyncio.create_task(db_add_user(user_id))
         asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "new_users"))
 
-    # Rate limit for non-VIP
     if not is_vip(user_id) and not await check_rate_limit(user_id):
         results = [
             InlineQueryResultArticle(
@@ -66,7 +63,7 @@ async def inline_search(update, context):
         await query.answer(results, cache_time=5, is_personal=True)
         return
 
-    # Determine category from keyword prefix / default
+    # Determine category from keyword prefix
     cat_match = re.match(r'^(国产|日韩|里番|欧美|番号)\s+(.+)', keyword)
     if cat_match:
         cat_map = {"国产": "guochan", "日韩": "jav", "里番": "hanime", "欧美": "oumei", "番号": "jav_id"}
@@ -79,12 +76,10 @@ async def inline_search(update, context):
     asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "searches"))
     asyncio.create_task(track_search(keyword))
 
-    # Try cache first
     cached_results = await cache_get(keyword)
     if cached_results is not None:
         results = cached_results
     else:
-        # Show searching indicator
         try:
             results = await asyncio.wait_for(
                 search_all(keyword, category, config.MAX_SEARCH_RESULTS),
@@ -109,7 +104,6 @@ async def inline_search(update, context):
         await query.answer([result_item], cache_time=30, is_personal=True)
         return
 
-    # Build inline results (first 10)
     items = []
     for i, r in enumerate(results[:10]):
         idx = i + 1

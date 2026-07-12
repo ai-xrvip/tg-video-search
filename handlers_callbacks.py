@@ -9,15 +9,14 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot_utils import (
-    now_ts, is_vip, store_url, get_url, url_store,
+    now_ts, is_vip, store_url, url_store,
     user_waiting_search, user_waiting_card, user_category,
     VIP_USERS, ALL_USERS, INVITES, ADMIN_IDS, admin_setvip_state,
-    _ONE_DAY, CATEGORY_LABELS, PURCHASE_URL,
+    _ONE_DAY, PURCHASE_URL,
     save_vip_db, save_invite_db,
     get_invite_lock, get_vip_lock,
 )
-from handlers_search import _do_search, _show_results
-from scrapers import CATEGORIES, _ensure_built
+from handlers_search import _do_search
 from scrapers.__init__ import CATEGORY_LABEL_MAP
 from config import config
 from database import (
@@ -41,17 +40,12 @@ async def handle_callback(update, context):
         pass
 
     try:
-        # ── PLAY VIDEO ──
         if data.startswith("play_"):
             await _handle_play(query, context, data)
             return
 
-        # ── Category switching in search results ──
         if data.startswith("catr_"):
-            rest = data[5:]  # remove "catr_"
-            # keyword could contain underscores, so split from the end
-            # Format: catr_{keyword}_{category}
-            # Find last underscore for category
+            rest = data[5:]
             last_underscore = rest.rfind("_")
             if last_underscore > 0:
                 keyword = rest[:last_underscore]
@@ -59,7 +53,6 @@ async def handle_callback(update, context):
                 await _do_search(query, keyword, cat)
             return
 
-        # ── Page navigation ──
         if data.startswith("pg_"):
             parts = data.split("_", 3)
             if len(parts) >= 4:
@@ -72,7 +65,6 @@ async def handle_callback(update, context):
                     pass
             return
 
-        # ── Category switching (main menu) ──
         if data.startswith("cat_"):
             cat = data[4:]
             if cat in CATEGORY_LABEL_MAP:
@@ -89,7 +81,6 @@ async def handle_callback(update, context):
                     pass
             return
 
-        # ── Hot keyword search ──
         if data.startswith("hot_"):
             keyword = data[4:]
             keyword = html.unescape(keyword)
@@ -99,7 +90,6 @@ async def handle_callback(update, context):
             await _do_search(query, keyword, category)
             return
 
-        # ── Re-search ──
         if data.startswith("resrch_"):
             parts = data.split("_", 2)
             if len(parts) >= 3:
@@ -108,7 +98,6 @@ async def handle_callback(update, context):
                 await _do_search(query, keyword, category)
             return
 
-        # ── Menu navigation ──
         if data == "menu_home":
             user_waiting_search.discard(user_id)
             user_waiting_card.discard(user_id)
@@ -171,7 +160,6 @@ async def handle_callback(update, context):
         if data == "page_info":
             return
 
-        # ── VIP ──
         if data == "vip_activate":
             user_waiting_card.add(user_id)
             user_waiting_search.discard(user_id)
@@ -209,7 +197,6 @@ async def handle_callback(update, context):
                 ]]))
             return
 
-        # ── Admin ──
         if data == "admin_setvip_prompt":
             if user_id not in ADMIN_IDS:
                 return
@@ -224,7 +211,6 @@ async def handle_callback(update, context):
         if data == "admin_gencode":
             if user_id not in ADMIN_IDS:
                 return
-            prefix_map = {"1": ("Y", 30), "2": ("J", 90), "3": ("N", 360), "4": ("S", None)}
             keyboard = [
                 [InlineKeyboardButton("月卡(30天)", callback_data="gencard_month")],
                 [InlineKeyboardButton("季卡(90天)", callback_data="gencard_quarter")],
@@ -291,14 +277,7 @@ async def handle_callback(update, context):
             pass
 
 
-# ── Video Playback ──
-
-
 async def _handle_play(query, context, data):
-    """Handle video playback request.
-    
-    data format: play_{source}_{url_key}
-    """
     parts = data.split("_", 2)
     if len(parts) < 3:
         await query.answer("❌ 无效的播放请求", show_alert=True)
@@ -307,7 +286,6 @@ async def _handle_play(query, context, data):
     source = parts[1]
     url_key = parts[2]
 
-    # Get the original URL + title from url_store
     entry = url_store.get(url_key)
     if not entry:
         await query.answer("❌ 视频链接已过期，请重新搜索", show_alert=True)
@@ -319,17 +297,12 @@ async def _handle_play(query, context, data):
         return
     logger.info("Play request: source=%s title=%s", source, video_title[:40])
 
-    # Get video detail from the appropriate scraper
     try:
         video_url = None
         detail = None
 
         if source == "xchina":
-            # XChina returns gallery pages; send the URL as-is
             video_url = original_url
-        elif source == "guochan":
-            from scrapers.guochan import get_video_detail as gd
-            video_url = await gd(original_url)
         elif source == "hanime":
             from scrapers.hanime import get_video_detail as gd
             detail = await gd(original_url)
@@ -375,7 +348,6 @@ async def _handle_play(query, context, data):
                 )
             except Exception as ve:
                 logger.warning("send_video failed: %s, trying send_message", ve)
-                # Fallback: send as message with URL link
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=f"▶️ <a href=\"{html.escape(video_url)}\">{html.escape(video_title)}</a>",
@@ -383,7 +355,6 @@ async def _handle_play(query, context, data):
                     disable_web_page_preview=False,
                 )
         else:
-            # No video URL found, send original page as fallback
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text=f"🔗 <a href=\"{html.escape(original_url)}\">{html.escape(video_title)}</a>",
@@ -404,7 +375,6 @@ async def _handle_play(query, context, data):
 
 
 async def _build_keyboard_with_category(user_id: int, category: str):
-    """Build search keyboard with category buttons."""
     from bot_utils import build_search_keyboard
     return await build_search_keyboard(user_id, [
         [InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")],

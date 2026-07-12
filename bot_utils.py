@@ -20,8 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ---- Constants ----
 _SEARCH_TIMEOUTS: dict[str, float] = {
-    "xchina": 8.0,
-    "guochan": config.SEARCH_TIMEOUT_GUOCHAN,
+    "xchina": config.SEARCH_TIMEOUT_XCHINA,
     "hanime": config.SEARCH_TIMEOUT_HANIME,
     "jav": config.SEARCH_TIMEOUT_JAV,
     "oumei": config.SEARCH_TIMEOUT_OUMEI,
@@ -35,7 +34,6 @@ RATE_LIMIT_MAX: int = config.MAX_SEARCHES_PER_MINUTE
 _ONE_DAY: int = 86400
 
 # ---- Category info (from scrapers) ----
-# Use fixed labels from scrapers/__init__
 from scrapers.__init__ import CATEGORY_LABEL_MAP as _SRC_CAT_LABELS
 
 CATEGORY_LABELS = dict(_SRC_CAT_LABELS)
@@ -61,7 +59,6 @@ ALL_USERS: set[int] = set()
 INVITES: dict[str, str] = {}
 _user_search_times: dict[int, list[float]] = defaultdict(list)
 
-# Current category filter per user
 user_category: dict[int, str] = {}
 admin_setvip_state: dict[int, bool] = {}
 
@@ -150,7 +147,6 @@ def now_ts() -> float:
 
 
 async def safe_search_wrapper(name: str, coro):
-    """Run a search coroutine with its configured timeout."""
     timeout = _SEARCH_TIMEOUTS.get(name, 8.0)
     try:
         return await asyncio.wait_for(coro, timeout=timeout)

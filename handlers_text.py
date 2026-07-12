@@ -9,7 +9,7 @@ from bot_utils import (
     now_ts, is_vip, check_rate_limit, user_waiting_search, user_waiting_card,
     user_category, ADMIN_IDS, VIP_USERS, ALL_USERS, INVITES, admin_setvip_state,
     PURCHASE_URL, _ONE_DAY, VIP_TEXT, build_search_keyboard,
-    save_vip_db, CATEGORY_LABELS,
+    save_vip_db,
 )
 from handlers_search import _do_search
 from handlers_commands import cmd_my, cmd_help
@@ -26,7 +26,6 @@ async def handle_text(update, context):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # Handle admin setvip input
     if user_id in admin_setvip_state and user_id in ADMIN_IDS:
         del admin_setvip_state[user_id]
         try:
@@ -84,7 +83,7 @@ async def handle_text(update, context):
         user_waiting_card.discard(user_id)
         await cmd_my(update, context)
         return
-    elif text == "📉 帮助":
+    elif text == "📖 帮助":
         user_waiting_search.discard(user_id)
         user_waiting_card.discard(user_id)
         await cmd_help(update, context)
@@ -150,7 +149,6 @@ async def handle_text(update, context):
         await _do_search(update, keyword, category)
         return
 
-    # Default: any text = search
     if text and len(text) >= 1:
         user_waiting_search.discard(user_id)
         user_waiting_card.discard(user_id)

@@ -2,7 +2,6 @@
 import asyncio
 import html
 import logging
-import re
 import secrets
 import string
 
@@ -10,11 +9,10 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot_utils import (
-    now_ts, is_vip, check_rate_limit, store_url,
+    now_ts, is_vip, check_rate_limit,
     user_waiting_search, user_waiting_card, user_category,
     VIP_USERS, ALL_USERS, INVITES, ADMIN_IDS,
     START_TEXT, START_KEYBOARD, VIP_TEXT, PURCHASE_URL, _ONE_DAY, MENU_KEYBOARD,
-    CATEGORY_LABELS, CATEGORY_BUTTONS,
     save_vip_db, save_invite_db, load_vip_db, build_search_keyboard,
     get_invite_lock, get_vip_lock,
 )
@@ -23,7 +21,7 @@ from config import config
 from database import (
     db_add_user, db_bump_stat, db_save_vip, db_card_count_used, db_card_count_total,
     db_vip_count, db_user_count, db_get_stats_last_days,
-    db_delete_expired_vip, db_activate_card,
+    db_delete_expired_vip,
     db_get_user_history,
 )
 
