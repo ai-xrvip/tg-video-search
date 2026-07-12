@@ -34,6 +34,7 @@ class OumeiScraper(BaseScraper):
                 headers=headers,
                 timeout=self.timeout,
                 impersonate="chrome124",
+                proxies=self._get_proxy(),
             ) as client:
                 resp = await client.get(self.base_url, params=params)
                 resp.raise_for_status()

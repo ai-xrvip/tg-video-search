@@ -27,6 +27,7 @@ class GuochanScraper(BaseScraper):
                 headers={"User-Agent": config.USER_AGENT, "Referer": self.base_url},
                 timeout=self.timeout,
                 follow_redirects=True,
+                **self._get_httpx_kwargs(),
             ) as client:
                 resp = await client.post(self.SEARCH_URL, data={"wd": keyword})
                 resp.raise_for_status()

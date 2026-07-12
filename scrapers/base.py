@@ -72,6 +72,23 @@ class BaseScraper(abc.ABC):
         """Search for videos. Must return list of VideoResult."""
         ...
 
+    def _get_proxy(self) -> dict | str | None:
+        """Get proxy config for HTTP clients based on config."""
+        if not config.PROXY_ENABLED:
+            return None
+        if config.PROXY_URL:
+            proxy_url = config.PROXY_URL
+            return {"http://": proxy_url, "https://": proxy_url}
+        return None
+
+    def _get_httpx_kwargs(self) -> dict:
+        """Get httpx client kwargs with proxy if enabled."""
+        kwargs = {}
+        proxy = self._get_proxy()
+        if proxy:
+            kwargs["proxies"] = proxy
+        return kwargs
+
     async def search_with_retry(
         self, keyword: str, max_results: int = 15,
         max_retries: int = 1, base_delay: float = 0.5,

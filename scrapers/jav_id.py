@@ -31,6 +31,7 @@ class JavIdScraper(BaseScraper):
                 headers={"User-Agent": config.USER_AGENT, "Referer": "https://www.jav321.com/"},
                 timeout=self.timeout,
                 follow_redirects=True,
+                **self._get_httpx_kwargs(),
             ) as client:
                 resp = await client.post(self.SEARCH_URL, data={"sn": keyword})
                 resp.raise_for_status()

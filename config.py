@@ -31,6 +31,7 @@ class Config:
 
     # Proxy settings
     PROXY_ENABLED: bool = os.getenv("PROXY_ENABLED", "true").lower() in ("true", "1", "yes")
+    PROXY_URL: str = os.getenv("PROXY_URL", "")
 
     # Webhook
     WEBHOOK_URL: str = os.getenv("WEBHOOK_URL", "")

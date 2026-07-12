@@ -27,7 +27,7 @@ class JavScraper(BaseScraper):
             search_url = f"{self.base_url}/dm334/search/{keyword}"
             headers = {"User-Agent": config.USER_AGENT, "Referer": self.base_url}
 
-            async with AsyncSession(headers=headers, timeout=self.timeout, impersonate="chrome124") as client:
+            async with AsyncSession(headers=headers, timeout=self.timeout, impersonate="chrome124", proxies=self._get_proxy()) as client:
                 resp = await client.get(search_url)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -92,7 +92,7 @@ async def get_video_detail(url: str) -> Optional[dict]:
     try:
         from curl_cffi.requests import AsyncSession
         headers = {"User-Agent": config.USER_AGENT, "Referer": config.JAV_BASE_URL}
-        async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_JAV, impersonate="chrome124") as client:
+        async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_JAV, impersonate="chrome124", proxies=self._get_proxy()) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             html = resp.text
