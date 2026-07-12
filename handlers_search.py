@@ -9,7 +9,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from bot_utils import (
     now_ts, is_vip, check_rate_limit,
     ALL_USERS, RESULTS_PER_PAGE,
-    CATEGORY_LABELS, store_url,
+    CATEGORY_LABELS as UI_CATEGORIES, store_url,
 )
 from database import db_add_user, db_bump_stat, db_add_search_history
 from pre_cache import cache_get, cache_set, track_search
@@ -18,6 +18,9 @@ from scrapers import search_all, _ensure_built, get_scraper, CATEGORIES
 from config import config
 
 logger = logging.getLogger(__name__)
+
+# Only show these 5 category buttons in UI
+UI_CAT_IDS = ["all", "guochan", "jav", "oumei", "jav_id"]
 
 
 async def _do_search(update_or_msg, keyword, category="all", page=1):
@@ -92,7 +95,7 @@ async def _do_search(update_or_msg, keyword, category="all", page=1):
         entry = {"keyword": keyword, "category": category, "results": results, "ts": now_ts()}
         await _show_results_page(msg, entry, 1)
     else:
-        cat_label = CATEGORY_LABELS.get(category, "\u5168\u90e8")
+        cat_label = UI_CATEGORIES.get(category, "\u5168\u90e8")
         try:
             await msg.edit_text(
                 f"\u274c 没有找到 <b>{html.escape(keyword)}</b> 在 <b>{cat_label}</b> 中的结果",
@@ -119,7 +122,7 @@ async def _async_refresh(keyword, category="all"):
 
 
 async def _show_results_page(msg, search_entry, page=1):
-    """Display search results with play buttons."""
+    """Display results with clickable titles."""
     results = search_entry["results"]
     keyword = search_entry["keyword"]
     cur_cat = search_entry.get("category", "all")
@@ -131,24 +134,27 @@ async def _show_results_page(msg, search_entry, page=1):
     end_idx = min(start_idx + RESULTS_PER_PAGE, total)
     page_results = results[start_idx:end_idx]
 
-    # Category row
+    # Header text only (no category row needed - buttons speak for themselves)
+    parts = [f"\U0001f50d <b>{html.escape(keyword)}</b>  (共{total}个  第{page}/{total_pages}页)"]
+
+    btns = []
+
+    # Category filter row — only 5 buttons: 全部/国产/日韩/欧美/番号
     _ensure_built()
     cat_row = []
-    for cid, cinfo in scrapers.CATEGORIES.items():
+    for cid in UI_CAT_IDS:
+        cinfo = CATEGORIES.get(cid)
+        if not cinfo:
+            continue
         label = cinfo["label"]
         if cid == cur_cat:
             cat_row.append(InlineKeyboardButton(f"[{label}]", callback_data=f"catr_{keyword}_{cid}"))
         else:
             cat_row.append(InlineKeyboardButton(label, callback_data=f"catr_{keyword}_{cid}"))
+    if cat_row:
+        btns.append(cat_row)
 
-    btns = [cat_row]
-
-    # Store URLs and build buttons
-    parts = [
-        f"\U0001f50d <b>{html.escape(keyword)}</b>  (共{total}个  第{page}/{total_pages}页)"
-    ]
-
-    result_btns = []
+    # Each result = one clickable button:  🎬[05:12] title
     for i, r in enumerate(page_results):
         idx = start_idx + i + 1
         title = r.get("title", "?")[:60]
@@ -156,21 +162,15 @@ async def _show_results_page(msg, search_entry, page=1):
         url = r.get("url", "")
         source = r.get("source", "")
 
-        # Store URL for playback callback
+        # Store URL
         url_key = await store_url(url, source=source, keyword=keyword)
 
-        # Format: 🎬[02:20] Title
         dur_str = f"[{duration}]" if duration else ""
-        clean_title = title.replace("[", "\u3010").replace("]", "\u3011")
-        parts.append(f"\n\U0001f3ac{dur_str} {html.escape(clean_title)}")
+        btn_text = f"{idx}. \U0001f3ac{dur_str} {title.replace('[', '【').replace(']', '】')}"
 
-        # Play button
-        result_btns.append(
-            InlineKeyboardButton(f"{idx}", callback_data=f"play_{source}_{url_key}")
-        )
-
-    if result_btns:
-        btns.append(result_btns)
+        btns.append([
+            InlineKeyboardButton(btn_text[:50], callback_data=f"play_{source}_{url_key}")
+        ])
 
     # Navigation row
     nav_row = []
