@@ -17,6 +17,7 @@ from bot_utils import (
     get_invite_lock, get_vip_lock,
 )
 from handlers_search import _do_search, _show_results_page
+from scrapers import CATEGORIES, _ensure_built
 from config import config
 from database import (
     db_add_user, db_save_vip, db_save_card,
@@ -39,7 +40,7 @@ async def handle_callback(update, context):
         pass
 
     try:
-        # ── Category switching in search results (catr_{keyword}_{category}) ──
+        # ── Category switching in search results ──
         if data.startswith("catr_"):
             rest = data[5:]
             parts = rest.rsplit("_", 1)
@@ -78,27 +79,18 @@ async def handle_callback(update, context):
 
         # ── Page navigation ──
         if data.startswith("page_"):
-            parts = data.split("_", 2)
-            if len(parts) >= 3:
+            parts = data.split("_", 3)
+            if len(parts) >= 4:
                 try:
-                    search_id, page_str = parts[1], parts[2]
+                    keyword = parts[1]
+                    page_str = parts[2]
+                    cat = parts[3]
                     page = int(page_str)
-                    await _show_results_page(query.message, search_id, page)
+                    from handlers_search import _show_results_page
+                    # For page nav we need to re-search and show page
+                    await _do_search(query, keyword, cat)
                 except (ValueError, IndexError):
                     pass
-            return
-
-        # ── Back to results ──
-        if data.startswith("back_"):
-            search_id = data[5:]
-            if search_id:
-                try:
-                    await _show_results_page(query.message, search_id)
-                except Exception:
-                    await query.edit_message_text("❌ 搜索结果已过期，请重新搜索",
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("🔍 搜索", callback_data="menu_search")
-                        ]]))
             return
 
         # ── Re-search ──
@@ -134,65 +126,91 @@ async def handle_callback(update, context):
             user_waiting_card.discard(user_id)
             if is_vip(user_id):
                 await query.edit_message_text(
-                    "<b>💎 你已是VIP会员</b>\n\n🎉 享受所有特权哦～",
+                    "<b>💎 你已是VIP会员</b>\n\n🎀 享受所有特权～",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")
+                        InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")
                     ]]))
             else:
-                await query.edit_message_text(
-                    "<b>💎 VIP 会员说明</b>\n\n"
-                    "🔰 <b>VIP 特权：</b>\n"
-                    "• 无限次搜索\n"
-                    "• 查看完整搜索结果\n"
-                    "• 翻页浏览所有结果\n"
-                    "• 优先体验新功能\n\n"
-                    "💰 联系管理员购买卡密～",
-                    parse_mode="HTML",
+                from bot_utils import VIP_TEXT
+                await query.edit_message_text(VIP_TEXT, parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔑 输入卡密激活", callback_data="vip_activate")],
+                        [InlineKeyboardButton("🔽 输入卡密激活", callback_data="vip_activate")],
                         [InlineKeyboardButton("💰 购买卡密", url=PURCHASE_URL)],
-                        [InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")],
+                        [InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")],
                     ]))
             return
 
-        # ── VIP activation ──
-        if data == "vip_activate":
-            user_waiting_card.add(user_id)
+        if data == "menu_help":
             user_waiting_search.discard(user_id)
-            if is_vip(user_id):
-                user_waiting_card.discard(user_id)
-                await query.edit_message_text(
-                    "✅ 你已经是VIP会员了～\n如需续费请使用新卡密。",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")
-                    ]]))
-                return
+            user_waiting_card.discard(user_id)
+            from handlers_commands import cmd_help
+            await cmd_help(query, context)
+            return
+
+        # ── VIP card activation ──
+        if data == "vip_activate":
+            user_waiting_search.discard(user_id)
+            user_waiting_card.add(user_id)
             await query.edit_message_text(
-                "🔑 请发送卡密（例如：Y-xxxx...）：\n\n"
-                "卡密类型：\n"
-                "Y- 月卡(30天)  J- 季卡(90天)\n"
-                "N- 年卡(360天)  S- 永久\n\n"
-                "📨 直接输入卡密即可激活",
+                "🔽 请输入卡密（卡密格式：X-xxxxxxxxxxxx）：\n\n"
+                "💡 卡密请联系管理员购买",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ 取消", callback_data="menu_home")
+                    InlineKeyboardButton("❌ 取消", callback_data="menu_home"),
                 ]]))
             return
 
-        # ── Invite info ──
-        if data == "invite_info":
-            await query.edit_message_text(
-                "<b>👨‍👩‍👧‍👦 邀请好友得VIP</b>\n\n"
-                "邀请好友注册，双方各得1天VIP！\n"
-                "邀请码在 /my 中查看。\n"
-                "将邀请码发送给好友，好友点击 /start 邀请码 即可。",
-                parse_mode="HTML",
+        # ── Card activation result ──
+        if data.startswith("card_"):
+            card_code = data[5:]
+            if not card_code:
+                return
+            if is_vip(user_id):
+                await query.edit_message_text(
+                    "❌ 你已经是VIP会员了。如需续费请使用新卡密。",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home"),
+                    ]]))
+                return
+            activated = await db_activate_card(card_code, user_id)
+            if not activated:
+                await query.edit_message_text(
+                    "❌ 卡密无效或已被使用。",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔽 重新输入", callback_data="vip_activate")],
+                        [InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")],
+                    ]))
+                return
+            prefix = card_code.split("-")[0] if "-" in card_code else ""
+            prefix_type = {"Y": "month", "J": "quarter", "N": "year", "S": "forever"}
+            card_type = prefix_type.get(prefix, "")
+            if not card_type:
+                await query.edit_message_text(
+                    "⚠️ 卡密格式无效，请确认卡密正确。",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🏠 返回主页", callback_data="menu_home"),
+                    ]]))
+                return
+            days_map = {"month": 30, "quarter": 90, "year": 360, "forever": None}
+            day_names = {"month": "月卡(30天)", "quarter": "季卡(90天)", "year": "年卡(360天)", "forever": "永久"}
+            days = days_map.get(card_type)
+            expiry = None if days is None else now_ts() + days * 86400
+            asyncio.create_task(db_bump_stat(datetime.now().strftime("%Y-%m-%d"), "card_activations"))
+            VIP_USERS[user_id] = expiry
+            await save_vip_db(user_id, expiry)
+            name = day_names.get(card_type, card_type)
+            if days:
+                exp_str = datetime.fromtimestamp(expiry).strftime("%Y-%m-%d")
+                msg = "✅ 卡密激活成功！\n\n类型：%s\n到期：%s\n\n返回主页即可享受VIP特权！" % (name, exp_str)
+            else:
+                msg = "✅ 卡密激活成功！\n\n类型：%s\n\n返回主页即可享受VIP特权！" % name
+            await query.edit_message_text(msg,
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🙋 查看我的邀请码", callback_data="invite_gen"),
                     InlineKeyboardButton("🏠 返回主页", callback_data="menu_home"),
                 ]]))
             return
 
+        # ── Invite code generation ──
         if data == "invite_gen":
             code = "INV-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
             await save_invite_db(code, user_id)
@@ -213,7 +231,7 @@ async def handle_callback(update, context):
             await query.answer("使用下方按钮翻页", show_alert=False)
             return
 
-        # ── Admin callbacks ──
+        # ── Admin-only callbacks ──
         if user_id not in ADMIN_IDS:
             logger.warning("Non-admin user %s attempted admin callback: %s", user_id, data)
             return
@@ -223,7 +241,7 @@ async def handle_callback(update, context):
             await query.edit_message_text(
                 "请输入用户ID和天数（用空格分隔）:\n"
                 "例如: 123456789 30 （30天VIP）\n"
-                "不帶天数则为永久VIP",
+                "不带天数则为永久VIP",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ 取消", callback_data="menu_home")
                 ]]))
@@ -289,8 +307,8 @@ async def handle_callback(update, context):
 
 
 async def _build_keyboard_with_category(user_id: int, category: str):
-    """Build search keyboard with active category highlighted."""
-    from bot_utils import CATEGORY_BUTTONS, build_search_keyboard
+    """Build search keyboard with current category."""
+    from bot_utils import build_search_keyboard
     return await build_search_keyboard(user_id, [
         [InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")],
     ])

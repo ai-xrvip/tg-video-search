@@ -1,8 +1,4 @@
-﻿"""scrapers/base.py — Abstract base class for all video source scrapers.
-
-Pattern source: PaulSonOfLars/tgbot (module auto-loading) +
-Selutario/videogram (scraper abstraction).
-"""
+﻿"""scrapers/base.py — Abstract base class for all video source scrapers."""
 from __future__ import annotations
 
 import abc
@@ -11,6 +7,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import ClassVar
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +27,29 @@ class VideoResult:
     extra: dict = field(default_factory=dict)
 
 
-# Import here to avoid circular imports at module level
 _scraper_registry: dict[str, type["BaseScraper"]] = {}
+
+# Shared httpx client for connection pooling
+_httpx_client: httpx.AsyncClient | None = None
+_client_lock = asyncio.Lock()
+
+
+async def _get_shared_client() -> httpx.AsyncClient:
+    """Get or create a shared httpx client with connection pooling."""
+    global _httpx_client
+    async with _client_lock:
+        if _httpx_client is None:
+            from config import config
+            limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
+            _httpx_client = httpx.AsyncClient(
+                headers={"User-Agent": config.USER_AGENT},
+                timeout=httpx.Timeout(10.0),
+                limits=limits,
+            )
+        return _httpx_client
 
 
 def register_scraper(name: str, cls: type["BaseScraper"]):
-    """Register a scraper class (called by __init_subclass__)."""
     _scraper_registry[name] = cls
 
 
@@ -61,7 +76,6 @@ class BaseScraper(abc.ABC):
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if not cls.name:
-            # Derive name from module filename if not set
             cls.name = cls.__module__.rsplit(".", 1)[-1]
         if cls.name and cls.name not in ("base",):
             register_scraper(cls.name, cls)
@@ -69,20 +83,27 @@ class BaseScraper(abc.ABC):
 
     @abc.abstractmethod
     async def search(self, keyword: str, max_results: int = 15) -> list[VideoResult]:
-        """Search for videos. Must return list of VideoResult."""
         ...
 
     def _get_proxy(self) -> dict | str | None:
-        """Get proxy config for HTTP clients based on config."""
+        """Get proxy config — uses PROXY_URL first, falls back to proxy pool."""
+        from config import config
         if not config.PROXY_ENABLED:
             return None
         if config.PROXY_URL:
             proxy_url = config.PROXY_URL
             return {"http://": proxy_url, "https://": proxy_url}
+        # Fall back to proxy pool
+        try:
+            from proxy_pool import get_random_proxy
+            proxy = get_random_proxy()
+            if proxy:
+                return {"http://": proxy, "https://": proxy}
+        except Exception:
+            pass
         return None
 
     def _get_httpx_kwargs(self) -> dict:
-        """Get httpx client kwargs with proxy if enabled."""
         kwargs = {}
         proxy = self._get_proxy()
         if proxy:
@@ -93,7 +114,6 @@ class BaseScraper(abc.ABC):
         self, keyword: str, max_results: int = 15,
         max_retries: int = 1, base_delay: float = 0.5,
     ) -> list[VideoResult]:
-        """Search with automatic retry + exponential backoff."""
         last_exc = None
         for attempt in range(1 + max_retries):
             try:

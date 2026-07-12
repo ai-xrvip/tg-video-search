@@ -1,4 +1,4 @@
-"""handlers_inline.py — Inline query handler for @botname search"""
+﻿"""handlers_inline.py — Inline query handler for @botname search"""
 import asyncio
 import html
 import logging
@@ -84,7 +84,6 @@ async def inline_search(update, context):
     if cached_results is not None:
         results = cached_results
     else:
-
         # Show searching indicator
         try:
             results = await asyncio.wait_for(
@@ -120,7 +119,7 @@ async def inline_search(update, context):
         dur = r.get("duration", "")
         desc = "%s %s" % (sl, ("⏱ " + dur) if dur else "")
 
-        msg_text = "<b>%s</b>\n\n%s\n\n<a href=\"%s\">\U0001f517 打开视频</a>" % (
+        msg_text = "<b>%s</b>\n\n%s\n\n<a href=\"%s\">🔗 打开视频</a>" % (
             html.escape(title), desc, html.escape(url)
         )
 

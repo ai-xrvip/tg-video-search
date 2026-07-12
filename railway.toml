@@ -1,9 +1,10 @@
 ﻿[build]
 builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-restartPolicyType = "ALWAYS"
 startCommand = "python main.py"
-
-[deploy.volumes]
-data = "/app/data"
+healthcheckPath = "/health"
+healthcheckTimeout = 10
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 3

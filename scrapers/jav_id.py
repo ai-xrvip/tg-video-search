@@ -1,4 +1,4 @@
-"""scrapers/jav_id.py ? Scraper for JAV ID / ?? search via jav321.com"""
+﻿"""scrapers/jav_id.py — Scraper for JAV ID / 番号 search via jav321.com"""
 import asyncio
 import logging
 import re
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class JavIdScraper(BaseScraper):
     name = "jav_id"
-    label = "\U0001f4d7 \u756a\u53f7"
+    label = "\U0001f4d7 番号"
     base_url = "https://www.jav321.com"
     timeout = 15.0
     SEARCH_URL = "https://www.jav321.com/search"
@@ -63,9 +63,9 @@ class JavIdScraper(BaseScraper):
                         dm = re.search(r'(\d{4}-\d{2}-\d{2})', detail_text)
                         if dm:
                             date = dm.group(1)
-                        dur_m = re.search(r'(\d+)?', detail_text)
+                        dur_m = re.search(r'(\d{2,3})\s*分', detail_text)
                         if dur_m:
-                            duration = "%s min" % dur_m.group(1)
+                            duration = f"{dur_m.group(1)} min"
 
                         if title and href:
                             results.append(VideoResult(
@@ -73,7 +73,7 @@ class JavIdScraper(BaseScraper):
                                 url=href,
                                 cover=cover,
                                 source="jav_id",
-                                source_label="\U0001f4d7 \u756a\u53f7",
+                                source_label="\U0001f4d7 番号",
                                 duration=duration,
                                 date=date,
                             ))

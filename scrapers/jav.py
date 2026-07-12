@@ -1,4 +1,4 @@
-"""scrapers/jav.py ? Scraper for missav.ws (??AV)"""
+﻿"""scrapers/jav.py — Scraper for missav.ws (日韩AV)"""
 import asyncio
 import logging
 import re
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class JavScraper(BaseScraper):
     name = "jav"
-    label = "\U0001f1f0\U0001f1f2 \u65e5\u97e9"
+    label = "\U0001f1f0\U0001f1f2 日韩"
     base_url = config.JAV_BASE_URL
     timeout = config.SEARCH_TIMEOUT_JAV
 
@@ -69,7 +69,7 @@ class JavScraper(BaseScraper):
                                 url=full_url,
                                 cover=cover,
                                 source="jav",
-                                source_label="\U0001f1f0\U0001f1f2 \u65e5\u97e9",
+                                source_label="\U0001f1f0\U0001f1f2 日韩",
                             ))
 
                     except Exception as e:
@@ -91,8 +91,12 @@ async def get_video_detail(url: str) -> Optional[dict]:
     """Extract video URL from a missav.ws page."""
     try:
         from curl_cffi.requests import AsyncSession
+        from scrapers.base import get_scraper
+        scraper_cls = get_scraper("jav")
+        proxy = scraper_cls()._get_proxy() if scraper_cls else None
+
         headers = {"User-Agent": config.USER_AGENT, "Referer": config.JAV_BASE_URL}
-        async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_JAV, impersonate="chrome124", proxies=self._get_proxy()) as client:
+        async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_JAV, impersonate="chrome124", proxies=proxy) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             html = resp.text

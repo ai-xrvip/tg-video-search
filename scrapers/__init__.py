@@ -1,4 +1,4 @@
-﻿"""scrapers/__init__.py — Unified search interface with module auto-discovery."""
+﻿"""scrapers/__init__.py — Unified search interface with parallel source execution."""
 from __future__ import annotations
 
 import asyncio
@@ -10,18 +10,13 @@ from scrapers.base import BaseScraper, VideoResult, register_scraper, get_scrape
 
 logger = logging.getLogger(__name__)
 
-# ===== Module auto-discovery =====
-# Scrapers are auto-discovered; just drop a .py in scrapers/ and it loads.
-
 CATEGORIES: dict[str, dict] = {}
 CATEGORY_LABELS: dict[str, str] = {}
 _built = False
 
 
 def _discover_scrapers():
-    """Discover all scraper modules by importing them.
-    Subclasses register themselves via BaseScraper.__init_subclass__ -> register_scraper().
-    """
+    """Discover all scraper modules by importing them."""
     mod_paths = glob.glob(os.path.join(os.path.dirname(__file__), "*.py"))
     modules = [
         os.path.basename(f)[:-3] for f in mod_paths
@@ -45,7 +40,7 @@ def _build_categories():
     global CATEGORIES, CATEGORY_LABELS
     sources = list_scrapers()
     CATEGORIES = {
-        "all": {"label": "\U0001f52a \u5168\u90e8", "sources": list(sources)},
+        "all": {"label": "\U0001f52a 全部", "sources": list(sources)},
     }
     for name in sources:
         cls = get_scraper(name)
@@ -53,10 +48,6 @@ def _build_categories():
             CATEGORIES[name] = {"label": cls.label, "sources": [name]}
 
     CATEGORY_LABELS = {k: v["label"] for k, v in CATEGORIES.items()}
-    # Ensure jav_id is always available
-    if "jav_id" not in CATEGORIES:
-        CATEGORIES["jav_id"] = {"label": "\U0001f4d7 \u756a\u53f7", "sources": ["jav_id"]}
-        CATEGORY_LABELS["jav_id"] = "\U0001f4d7 \u756a\u53f7"
 
 
 def _ensure_built():
@@ -68,10 +59,10 @@ def _ensure_built():
 
 
 async def search_all(keyword: str, category: str = "all", max_results: int = 30) -> list[dict]:
-    """Search across all video sources with race-based early return.
+    """Search across all video sources in parallel.
 
-    Returns results as soon as sources complete, with a hard overall timeout.
-    This ensures the bot responds quickly even if some sources are slow.
+    Runs all sources concurrently, collects results as they complete,
+    and returns deduplicated, sorted results.
     """
     _ensure_built()
 
@@ -81,7 +72,7 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
         return []
 
     results_per_source = max(max_results // max(len(source_names), 1), 5)
-    tasks: list[tuple[str, asyncio.Task]] = []
+    tasks: dict[str, asyncio.Task] = {}
 
     for src_name in source_names:
         cls = get_scraper(src_name)
@@ -89,8 +80,9 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
             logger.warning("No scraper registered for %s, skipping", src_name)
             continue
         scraper = cls()
-        task = asyncio.create_task(scraper.search_with_retry(keyword, results_per_source))
-        tasks.append((src_name, task))
+        tasks[src_name] = asyncio.create_task(
+            scraper.search_with_retry(keyword, results_per_source)
+        )
 
     if not tasks:
         return []
@@ -98,46 +90,29 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
     all_results: list[VideoResult] = []
     source_order = {s: i for i, s in enumerate(source_names)}
 
-    # Phase 1: Wait up to 4s for ANY results
-    pending = {name: task for name, task in tasks}
-    
-    if pending:
-        done_set, pending_set = await asyncio.wait(
-            list(pending.values()),
-            timeout=5.0,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+    # Wait for all tasks with a hard timeout (15s)
+    done, pending = await asyncio.wait(
+        tasks.values(),
+        timeout=15.0,
+        return_when=asyncio.ALL_COMPLETED,
+    )
 
-        for task in done_set:
-            task_name = next(n for n, t in pending.items() if t is task)
-            try:
-                result = task.result()
-                if result:
-                    all_results.extend(result)
-            except Exception as e:
-                logger.debug("%s search failed: %s", task_name, e)
-            del pending[task_name]
+    # Cancel remaining
+    for t in pending:
+        t.cancel()
 
-        for t in pending_set:
-            t.cancel()
-
-    # Phase 2: Quick collect - wait 2s more for remaining fast sources
-    if pending:
-        await asyncio.sleep(2.0)
-        still_pending = dict(pending)
-        for src_name, task in still_pending.items():
-            if task.done():
-                try:
-                    result = task.result()
-                    if result:
-                        all_results.extend(result)
-                except Exception:
-                    pass
-                del pending[src_name]
-
-    # Cancel anything still running
-    for _, task in pending.items():
-        task.cancel()
+    # Collect results from completed tasks
+    for task in done:
+        src_name = next(n for n, t in tasks.items() if t is task)
+        try:
+            result = task.result()
+            if result:
+                all_results.extend(result)
+                logger.debug("%s returned %d results", src_name, len(result))
+        except asyncio.CancelledError:
+            logger.debug("%s search was cancelled", src_name)
+        except Exception as e:
+            logger.debug("%s search failed: %s", src_name, e)
 
     # Deduplicate by URL
     seen_urls: set[str] = set()
@@ -151,6 +126,8 @@ async def search_all(keyword: str, category: str = "all", max_results: int = 30)
     unique.sort(key=lambda r: source_order.get(r.source, 99))
 
     return [r.__dict__ for r in unique[:max_results]]
+
+
 async def search_category(keyword: str, category: str, max_results: int = 15) -> list[dict]:
     """Search within a single category/source."""
     return await search_all(keyword, category, max_results)

@@ -1,4 +1,4 @@
-"""scrapers/hanime.py ? Scraper for hanime1.me (??/????)"""
+﻿"""scrapers/hanime.py — Scraper for hanime1.me (里番/动漫)"""
 import asyncio
 import logging
 import re
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class HanimeScraper(BaseScraper):
     name = "hanime"
-    label = "\U0001f3b9 \u91cc\u756a"
+    label = "\U0001f3b9 里番"
     base_url = config.HANIME_BASE_URL
     timeout = config.SEARCH_TIMEOUT_HANIME
 
@@ -65,7 +65,7 @@ class HanimeScraper(BaseScraper):
                     dm = re.search(r"(\d+:\d+(?::\d+)?)", anchor_text)
                     if dm:
                         duration = dm.group(1)
-                    vm = re.search(r"([\d.]+??|\d+\.?\d*?)", anchor_text)
+                    vm = re.search(r"([\d.]+[KMB]?)", anchor_text)
                     if vm:
                         views = vm.group(1)
 
@@ -75,7 +75,7 @@ class HanimeScraper(BaseScraper):
                             url=full_url,
                             cover=cover,
                             source="hanime",
-                            source_label="\U0001f3b9 \u91cc\u756a",
+                            source_label="\U0001f3b9 里番",
                             duration=duration,
                             views=views,
                         ))
@@ -95,8 +95,12 @@ async def get_video_detail(url: str) -> Optional[dict]:
     """Extract video source URLs from a hanime1.me watch page."""
     try:
         from curl_cffi.requests import AsyncSession
+        from scrapers.base import get_scraper
+        scraper_cls = get_scraper("hanime")
+        proxy = scraper_cls()._get_proxy() if scraper_cls else None
+
         headers = {"User-Agent": config.USER_AGENT, "Referer": config.HANIME_BASE_URL}
-        async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_HANIME, impersonate="chrome124", proxies=self._get_proxy()) as client:
+        async with AsyncSession(headers=headers, timeout=config.SEARCH_TIMEOUT_HANIME, impersonate="chrome124", proxies=proxy) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             html = resp.text

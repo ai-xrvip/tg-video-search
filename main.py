@@ -32,6 +32,7 @@ from handlers_callbacks import handle_callback
 from handlers_text import handle_text
 from handlers_inline import inline_search
 from pre_cache import start_pre_cache, stop_pre_cache
+from proxy_pool import start_proxy_pool, stop_proxy_pool
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ async def _startup(application):
         # Start background tasks
         asyncio.create_task(_periodic_cleanup(application))
         asyncio.create_task(start_pre_cache())
+        asyncio.create_task(start_proxy_pool())
         # Set bot commands
         from telegram import BotCommand
         await application.bot.set_my_commands([
@@ -143,6 +145,7 @@ async def shutdown(app, signal_str=None):
         logger.info("Shutting down...")
     try:
         await stop_pre_cache()
+        await stop_proxy_pool()
         await stop_database()
         await app.stop()
         await app.shutdown()
@@ -187,10 +190,6 @@ async def _load_data():
     except Exception as e:
         logger.error("Failed to load data: %s", e)
         raise
-
-
-async def _post_shutdown(app):
-    await shutdown(app)
 
 
 def main():
