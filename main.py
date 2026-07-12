@@ -76,6 +76,8 @@ async def _periodic_cleanup(application):
 
 async def _startup(application):
     """Run after database is ready."""
+    # Start database first (must be in same event loop as run_polling)
+    await start_database()
     # Load data
     await _load_data()
 
@@ -180,14 +182,7 @@ def main():
     if config.WEBHOOK_URL:
         logger.info("Starting in webhook mode: " + config.WEBHOOK_URL)
 
-        async def _boot():
-            await start_database()
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_boot())
-
-        # run_webhook() calls initialize()/start() internally
+        # run_webhook() calls initialize()/start()/start_database() internally
         try:
             app.run_webhook(
                 listen="0.0.0.0",
@@ -196,31 +191,14 @@ def main():
                 webhook_url=config.WEBHOOK_URL + "/webhook",
             )
         except KeyboardInterrupt:
-            loop.run_until_complete(shutdown(app, "SIGINT"))
+            asyncio.run(shutdown(app, "SIGINT"))
     else:
-        # Polling mode
+        # Polling mode ? run_polling() handles everything
         logger.info("Starting in polling mode")
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def _boot():
-            await start_database()
-
-        loop.run_until_complete(_boot())
-
-        async def _start_polling():
-            await app.initialize()
-            await app.start()
-            await app.updater.start_polling(allowed_updates=["message", "callback_query", "inline_query", "chosen_inline_result"])
-            try:
-                while True:
-                    await asyncio.sleep(60)
-            except asyncio.CancelledError:
-                await shutdown(app)
-
         try:
-            loop.run_until_complete(_start_polling())
+            app.run_polling(
+                allowed_updates=["message", "callback_query", "inline_query", "chosen_inline_result"],
+                drop_pending_updates=True,
+            )
         except KeyboardInterrupt:
-            loop.run_until_complete(shutdown(app, "SIGINT"))
-
+            asyncio.run(shutdown(app, "SIGINT"))
