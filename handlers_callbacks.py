@@ -40,10 +40,12 @@ async def handle_callback(update, context):
         pass
 
     try:
+        # ── PLAY VIDEO ──
         if data.startswith("play_"):
             await _handle_play(query, context, data)
             return
 
+        # ── Category switching in search results ──
         if data.startswith("catr_"):
             rest = data[5:]
             last_underscore = rest.rfind("_")
@@ -53,6 +55,7 @@ async def handle_callback(update, context):
                 await _do_search(query, keyword, cat)
             return
 
+        # ── Page navigation ──
         if data.startswith("pg_"):
             parts = data.split("_", 3)
             if len(parts) >= 4:
@@ -65,6 +68,7 @@ async def handle_callback(update, context):
                     pass
             return
 
+        # ── Category switching (main menu) ──
         if data.startswith("cat_"):
             cat = data[4:]
             if cat in CATEGORY_LABEL_MAP:
@@ -81,6 +85,7 @@ async def handle_callback(update, context):
                     pass
             return
 
+        # ── Hot keyword search ──
         if data.startswith("hot_"):
             keyword = data[4:]
             keyword = html.unescape(keyword)
@@ -90,6 +95,7 @@ async def handle_callback(update, context):
             await _do_search(query, keyword, category)
             return
 
+        # ── Re-search ──
         if data.startswith("resrch_"):
             parts = data.split("_", 2)
             if len(parts) >= 3:
@@ -98,6 +104,7 @@ async def handle_callback(update, context):
                 await _do_search(query, keyword, category)
             return
 
+        # ── Menu navigation ──
         if data == "menu_home":
             user_waiting_search.discard(user_id)
             user_waiting_card.discard(user_id)
@@ -125,7 +132,8 @@ async def handle_callback(update, context):
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")
-                    ]]]))
+                    ]])
+                )
             else:
                 from bot_utils import VIP_TEXT
                 await query.edit_message_text(VIP_TEXT, parse_mode="HTML",
@@ -133,7 +141,8 @@ async def handle_callback(update, context):
                         [InlineKeyboardButton("🔽 输入卡密激活", callback_data="vip_activate")],
                         [InlineKeyboardButton("💰 购买卡密", url=PURCHASE_URL)],
                         [InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")]
-                    ]))
+                    ])
+                )
             return
 
         if data == "menu_help":
@@ -154,12 +163,14 @@ async def handle_callback(update, context):
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")
-                ]]))
+                ]])
+            )
             return
 
         if data == "page_info":
             return
 
+        # ── VIP ──
         if data == "vip_activate":
             user_waiting_card.add(user_id)
             user_waiting_search.discard(user_id)
@@ -168,7 +179,8 @@ async def handle_callback(update, context):
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")
-                ]]))
+                ]])
+            )
             return
 
         if data == "invite_info":
@@ -179,7 +191,8 @@ async def handle_callback(update, context):
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")
-                ]]))
+                ]])
+            )
             return
 
         if data == "invite_gen":
@@ -194,9 +207,11 @@ async def handle_callback(update, context):
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🏠 返回主菜单", callback_data="menu_home")
-                ]]))
+                ]])
+            )
             return
 
+        # ── Admin ──
         if data == "admin_setvip_prompt":
             if user_id not in ADMIN_IDS:
                 return
@@ -205,7 +220,8 @@ async def handle_callback(update, context):
                 "请输入用户ID和天数（如: 123456 30），天数为0表示永久VIP：",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("取消", callback_data="menu_home")
-                ]]))
+                ]])
+            )
             return
 
         if data == "admin_gencode":
@@ -220,7 +236,8 @@ async def handle_callback(update, context):
             ]
             await query.edit_message_text(
                 "选择要生成的卡密类型：",
-                reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
             return
 
         if data.startswith("gencard_"):
@@ -241,7 +258,8 @@ async def handle_callback(update, context):
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("继续生成", callback_data="admin_gencode"),
                     InlineKeyboardButton("🏠 返回主页", callback_data="menu_home"),
-                ]]))
+                ]])
+            )
             return
 
         if data == "admin_exportcards":
@@ -252,7 +270,8 @@ async def handle_callback(update, context):
                 await query.edit_message_text("没有未使用的卡密。",
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")
-                    ]]))
+                    ]])
+                )
                 return
             type_names = {"month": "月卡", "quarter": "季卡", "year": "年卡", "forever": "永久"}
             lines = []
@@ -263,7 +282,8 @@ async def handle_callback(update, context):
                 f"共 {len(cards)} 张未使用卡密：\n\n" + "\n".join(list(lines[:50])),
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")
-                ]]))
+                ]])
+            )
             return
 
     except Exception as e:
@@ -272,12 +292,14 @@ async def handle_callback(update, context):
             await query.edit_message_text("❌ 操作出错，请重试",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🏠 返回主页", callback_data="menu_home")
-                ]]))
+                ]])
+            )
         except Exception:
             pass
 
 
 async def _handle_play(query, context, data):
+    """Handle video playback request."""
     parts = data.split("_", 2)
     if len(parts) < 3:
         await query.answer("❌ 无效的播放请求", show_alert=True)
